@@ -422,35 +422,26 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {/* Search analytics */}
-        <Card title={isAr ? 'تحليلات البحث' : 'Search Analytics'} subtitle={isAr ? 'حسب نوع البحث — 30 يوم' : 'By search mode — 30 days'}>
-          <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={searchAnalytics} layout="vertical" margin={{ left: 10 }}>
-              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-              <YAxis type="category" dataKey="type" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} width={70} />
-              <Tooltip contentStyle={chartTooltip} />
-              <Bar dataKey="count" name={isAr ? 'عمليات البحث' : 'Searches'} radius={[0, 6, 6, 0]} barSize={22}>
-                <Cell fill="#10b981" /><Cell fill="#0ea5e9" /><Cell fill="#8b5cf6" />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-
-        {/* Department activity — management only */}
+        {/* Air quality — management only */}
         {isMgmt && (
-          <Card title={isAr ? 'نشاط الإدارات' : 'User Activity by Department'} subtitle={isAr ? 'نسبة التبني' : 'Adoption rate'}>
-            <div className="space-y-3 pt-1">
-              {deptActivity.map((d) => (
-                <div key={d.dept}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-600">{isAr ? d.ar : d.dept}</span>
-                    <span className="text-slate-500 font-semibold">{d.usage}%</span>
-                  </div>
-                  <ProgressBar value={d.usage} tone={d.usage > 80 ? 'emerald' : d.usage > 60 ? 'sky' : 'amber'} />
-                </div>
-              ))}
-            </div>
+          <Card
+            className="xl:col-span-2"
+            title={isAr ? 'جودة الهواء — الاتجاه والتنبؤ' : 'Air Quality — Trend & Forecast'}
+            subtitle={isAr ? 'PM10 و NO₂ مع تنبؤ ٣ أشهر (*)' : 'PM10 & NO₂ with 3-month forecast (*)'}
+          >
+            <ResponsiveContainer width="100%" height={290}>
+              <ComposedChart data={monthlyAir}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="m" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                <Tooltip contentStyle={chartTooltip} />
+                <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
+                <ReferenceLine y={120} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: isAr ? 'الحد النظامي' : 'Regulatory limit', fill: '#f43f5e', fontSize: 10 }} />
+                <Bar dataKey="pm10" name="PM10 µg/m³" fill="#10b981" radius={[4, 4, 0, 0]} barSize={18} />
+                <Bar dataKey="no2" name="NO₂ ppb" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={18} />
+                <Line dataKey="forecast" name={isAr ? 'تنبؤ PM10' : 'PM10 forecast'} stroke="#d97706" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 4 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
           </Card>
         )}
       </div>
@@ -472,30 +463,39 @@ export default function Dashboard() {
             </div>
           </Card>
 
-          {/* Air quality charts — management only */}
-          {isMgmt && (
-            <div className="space-y-4">
-              <Card
-                title={isAr ? 'جودة الهواء — الاتجاه والتنبؤ' : 'Air Quality — Trend & Forecast'}
-                subtitle={isAr ? 'PM10 و NO₂ مع تنبؤ ٣ أشهر (*)' : 'PM10 & NO₂ with 3-month forecast (*)'}
-              >
-                <ResponsiveContainer width="100%" height={290}>
-                  <ComposedChart data={monthlyAir}>
-                    <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="m" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={chartTooltip} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
-                    <ReferenceLine y={120} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: isAr ? 'الحد النظامي' : 'Regulatory limit', fill: '#f43f5e', fontSize: 10 }} />
-                    <Bar dataKey="pm10" name="PM10 µg/m³" fill="#10b981" radius={[4, 4, 0, 0]} barSize={18} />
-                    <Bar dataKey="no2" name="NO₂ ppb" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={18} />
-                    <Line dataKey="forecast" name={isAr ? 'تنبؤ PM10' : 'PM10 forecast'} stroke="#d97706" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 4 }} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </Card>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Search analytics */}
+            <Card title={isAr ? 'تحليلات البحث' : 'Search Analytics'} subtitle={isAr ? 'حسب نوع البحث — 30 يوم' : 'By search mode — 30 days'}>
+              <ResponsiveContainer width="100%" height={210}>
+                <BarChart data={searchAnalytics} layout="vertical" margin={{ left: 10 }}>
+                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis type="category" dataKey="type" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} width={70} />
+                  <Tooltip contentStyle={chartTooltip} />
+                  <Bar dataKey="count" name={isAr ? 'عمليات البحث' : 'Searches'} radius={[0, 6, 6, 0]} barSize={22}>
+                    <Cell fill="#10b981" /><Cell fill="#0ea5e9" /><Cell fill="#8b5cf6" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
 
-            </div>
-          )}
+            {/* Department activity — management only */}
+            {isMgmt && (
+              <Card title={isAr ? 'نشاط الإدارات' : 'User Activity by Department'} subtitle={isAr ? 'نسبة التبني' : 'Adoption rate'}>
+                <div className="space-y-3 pt-1">
+                  {deptActivity.map((d) => (
+                    <div key={d.dept}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-600">{isAr ? d.ar : d.dept}</span>
+                        <span className="text-slate-500 font-semibold">{d.usage}%</span>
+                      </div>
+                      <ProgressBar value={d.usage} tone={d.usage > 80 ? 'emerald' : d.usage > 60 ? 'sky' : 'amber'} />
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
         </div>
       )}
 
