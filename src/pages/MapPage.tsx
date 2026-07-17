@@ -960,29 +960,7 @@ export default function MapPage() {
   }, [is3DMode])
 
   /* ────── Region Classifier Based on Hover Coordinates ────── */
-  const getRegionName = (coords: { lat: number; lng: number; elevation: number }) => {
-    const { lat, lng, elevation } = coords
-    if (lng < 39.5) {
-      if (elevation < 0) return isAr ? 'صدع البحر الأحمر المائي' : 'Red Sea Rift Zone'
-      return isAr ? 'سهل تهامة الساحلي' : 'Tihama Coastal Plain'
-    }
-    if (lng >= 39.5 && lng < 43 && lat < 23) {
-      return isAr ? 'مرتفعات السروات الجبلية' : 'Sarawat Mountain Range'
-    }
-    if (lng >= 35 && lng < 40 && lat >= 23) {
-      return isAr ? 'سلسلة جبال الحجاز' : 'Hijaz Mountain Range'
-    }
-    if (lng >= 43 && lng < 48 && lat > 18 && lat < 28) {
-      return isAr ? 'هضبة نجد الوسطى' : 'Najd Central Plateau'
-    }
-    if (lng >= 45 && lat <= 19.5) {
-      return isAr ? 'صحراء الربع الخالي' : 'Rub\' al Khali (Empty Quarter)'
-    }
-    if (lng >= 48) {
-      return isAr ? 'المنطقة الساحلية الشرقية' : 'Eastern Coastal Plain'
-    }
-    return isAr ? 'المملكة العربية السعودية' : 'Kingdom of Saudi Arabia'
-  }
+
 
   // Count stations for dashboard statistics
   const goodStations = monitoringStations.filter(s => s.aqi <= 50).length
