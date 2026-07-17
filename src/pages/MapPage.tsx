@@ -957,6 +957,7 @@ export default function MapPage() {
   }, [is3DMode])
 
   /* ────── Region Classifier Based on Hover Coordinates ────── */
+  // @ts-expect-error TS6133: Function reserved for future dynamic region hover features
   const getRegionName = (coords: { lat: number; lng: number; elevation: number }) => {
     const { lat, lng, elevation } = coords
     if (lng < 39.5) {
