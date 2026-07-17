@@ -17,6 +17,7 @@ import SearchPage from './pages/SearchPage'
 import OCRPage from './pages/OCRPage'
 import Workflows from './pages/Workflows'
 import Admin from './pages/Admin'
+import MapPage from './pages/MapPage'
 
 export default function App() {
   return (
@@ -26,7 +27,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<MapPage />} />
             <Route path="/knowledge-base" element={<KnowledgeBase />} />
             <Route path="/assistant" element={<DocAssistant />} />
             <Route path="/environmental-studies" element={<EnvStudies />} />
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="/ocr" element={<OCRPage />} />
             <Route path="/workflows" element={<Workflows />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/dashboard" element={<Dashboard />} />
           </Route>
         </Routes>
       </HashRouter>

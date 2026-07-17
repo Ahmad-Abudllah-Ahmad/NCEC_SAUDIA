@@ -64,6 +64,7 @@ export default function Workflows() {
   const [items, setItems] = useState<WF[]>(initialActive)
   const [completed, setCompleted] = useState(1208)
   const [notes, setNotes] = useState<Note[]>(initialNotes)
+  void notes
   const [showNew, setShowNew] = useState(false)
   const [nextId, setNextId] = useState(2217)
   const [form, setForm] = useState({ doc: '', priority: 'medium' as WF['priority'], assignee: assignees[0] })
@@ -177,9 +178,9 @@ export default function Workflows() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="mb-4">
         {/* Active workflows */}
-        <Card className="xl:col-span-2" title={isAr ? 'سير العمل النشط' : 'Active Workflows'} subtitle={isAr ? 'التتبع المباشر للحالة والإسناد' : 'Live status tracking & assignment'}>
+        <Card title={isAr ? 'سير العمل النشط' : 'Active Workflows'} subtitle={isAr ? 'التتبع المباشر للحالة والإسناد' : 'Live status tracking & assignment'}>
           {!canApprove && (
             <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
               {role.id} — {isAr ? 'يمكنك المتابعة فقط؛ تقديم المراحل يتطلب صلاحية الاعتماد.' : 'View-only: advancing stages requires approval permission.'}
@@ -223,21 +224,6 @@ export default function Workflows() {
                 {isAr ? 'لا يوجد سير عمل نشط — أنشئ واحداً جديداً.' : 'No active workflows — create a new one.'}
               </div>
             )}
-          </div>
-        </Card>
-
-        {/* Notifications */}
-        <Card title={isAr ? 'الإشعارات التلقائية' : 'Automated Notifications'} subtitle={isAr ? 'إشعارات وإسناد وتصعيد تلقائي' : 'Auto-notify, assign & escalate'}>
-          <div className="space-y-2.5 max-h-[420px] overflow-y-auto pe-1">
-            {notes.map((n, i) => (
-              <div key={i} className="flex items-start gap-2.5 rounded-lg bg-slate-50 border border-slate-200 p-3">
-                <Bell size={13} className="text-sky-600 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-xs text-slate-600 leading-snug" dir="auto">{isAr ? n.textAr : n.text}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{n.time === 'now' ? (isAr ? 'الآن' : 'now') : `${n.time} ${isAr ? 'مضت' : 'ago'}`}</p>
-                </div>
-              </div>
-            ))}
           </div>
         </Card>
       </div>

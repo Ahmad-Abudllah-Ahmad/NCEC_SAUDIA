@@ -2,19 +2,16 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   FileText, Bot, Users, Search, Timer, CheckCircle2, GitBranch, Gauge,
-  AlertTriangle, ArrowUpRight, Activity, LayoutGrid, Lock, ExternalLink,
+  AlertTriangle, ArrowUpRight, Activity, Lock, ExternalLink,
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, ComposedChart,
+  BarChart, Bar, PieChart, Pie, Cell, Line, ComposedChart,
   Legend, ReferenceLine,
 } from 'recharts'
-import { PageHeader, KpiCard, Card, Badge, ProgressBar, Button, Modal, chartTooltip } from '../components/ui'
+import { PageHeader, Badge, Button, Modal, chartTooltip } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
-
-const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
 
 const aiUsage = [
   { day: 'Sun', queries: 1240, docs: 86 },
@@ -181,6 +178,7 @@ export default function Dashboard() {
   const p = role.perms
   const [alertIdx, setAlertIdx] = useState<number | null>(null)
   const [docTypeIdx, setDocTypeIdx] = useState(0)
+  const [chartTab, setChartTab] = useState<'usage' | 'air' | 'search'>('usage')
 
   // Role-scoped visibility
   const isMgmt = p.admin || p.approve                                   // Super Admin, Dept. Manager
@@ -205,6 +203,12 @@ export default function Dashboard() {
     }
   }
 
+  const accuracyPointsStr = accuracyTrend.map((t, idx) => {
+    const x = (idx / (accuracyTrend.length - 1)) * 100
+    const y = 18 - ((t.accuracy - 90) / 10) * 16
+    return `${x},${y}`
+  }).join(' ')
+
   return (
     <div>
       <PageHeader
@@ -221,283 +225,532 @@ export default function Dashboard() {
         }
       />
 
-      {/* KPI band — cards shown according to role */}
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 mb-6">
-        <KpiCard icon={FileText} label={isAr ? 'إجمالي الوثائق' : 'Total Documents'} value="11,440" delta="+312" deltaUp accent="emerald"
-          trend={[10850, 10920, 11040, 11128, 11210, 11305, 11440]} trendLabels={days}
-          onClick={() => openKpi('/knowledge-base')} title={isAr ? 'افتح قاعدة المعرفة' : 'Open Knowledge Base'} />
-        {p.chat && (
-          <KpiCard icon={Bot} label={isAr ? 'استعلامات الذكاء اليوم' : 'AI Queries Today'} value="2,463" delta="+18%" deltaUp accent="sky"
-            trend={[1240, 1890, 2140, 1980, 2460, 620, 480]} trendLabels={days}
-            onClick={() => openKpi('/assistant')} title={isAr ? 'افتح مساعد الوثائق' : 'Open AI Document Assistant'} />
-        )}
-        {isMgmt && (
-          <KpiCard icon={Users} label={isAr ? 'مستخدمون نشطون' : 'Active Users'} value="284" delta="+9%" deltaUp accent="violet"
-            trend={[212, 236, 241, 255, 248, 262, 284]} trendLabels={days}
-            onClick={() => openKpi('/admin')} title={isAr ? 'افتح الإدارة والأمان' : 'Open Admin & Security'} />
-        )}
-        <KpiCard icon={Search} label={isAr ? 'عمليات بحث / أسبوع' : 'Searches / Week'} value="23.4K" delta="+11%" deltaUp accent="emerald"
-          trend={[18.2, 19.4, 20.1, 21.0, 21.9, 22.6, 23.4]} trendLabels={weeks} unit="K"
-          onClick={() => openKpi('/search')} title={isAr ? 'افتح البحث المؤسسي' : 'Open Enterprise Search'} />
-        {(p.upload || isMgmt) && (
-          <KpiCard icon={Timer} label={isAr ? 'قائمة المعالجة' : 'Processing Queue'} value="47" delta="-12" deltaUp accent="amber"
-            trend={[82, 74, 66, 59, 61, 52, 47]} trendLabels={days}
-            onClick={() => openKpi('/ocr')} title={isAr ? 'افتح وحدة OCR' : 'Open OCR Module'} />
-        )}
-        {canReview && (
-          <KpiCard icon={CheckCircle2} label={isAr ? 'مراجعات مكتملة' : 'Reviews Completed'} value="1,208" delta="+64" deltaUp accent="emerald"
-            trend={[980, 1024, 1061, 1102, 1144, 1178, 1208]} trendLabels={weeks}
-            onClick={() => openKpi('/review')} title={isAr ? 'افتح مراجعة الوثائق' : 'Open Document Review'} />
-        )}
-        {canWorkflows && (
-          <KpiCard icon={GitBranch} label={isAr ? 'سير عمل نشط' : 'Active Workflows'} value="36" accent="sky"
-            trend={[28, 31, 29, 34, 38, 35, 36]} trendLabels={days}
-            onClick={() => openKpi('/workflows')} title={isAr ? 'افتح أتمتة سير العمل' : 'Open Workflow Automation'} />
-        )}
-        {isMgmt && (
-          <KpiCard icon={Gauge} label={isAr ? 'دقة النموذج' : 'Model Accuracy'} value="96.2%" delta="+0.9" deltaUp accent="emerald" hint={isAr ? 'هلوسة 1.1%' : 'Hallucination 1.1%'}
-            trend={[91.2, 92.6, 93.4, 94.1, 95.3, 95.8, 96.2]} trendLabels={weeks} unit="%"
-            onClick={() => openKpi('/admin')} title={isAr ? 'افتح الإدارة والأمان' : 'Open Admin & Security'} />
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
-        {/* AI usage trend */}
-        <Card
-          className="xl:col-span-2"
-          title={isAr ? 'استخدام الذكاء الاصطناعي — 7 أيام' : 'AI Usage — Last 7 Days'}
-          subtitle={isAr ? 'الاستعلامات والوثائق المعالجة يومياً' : 'Daily queries and documents processed'}
-          actions={<Badge tone="sky">RAG + LLM</Badge>}
-        >
-          <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={aiUsage}>
-              <defs>
-                <linearGradient id="gq" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="day" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-              <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-              <Tooltip contentStyle={chartTooltip} />
-              <Area type="monotone" dataKey="queries" name={isAr ? 'استعلامات' : 'Queries'} stroke="#10b981" fill="url(#gq)" strokeWidth={2} />
-              <Area type="monotone" dataKey="docs" name={isAr ? 'وثائق معالجة' : 'Docs Processed'} stroke="#0ea5e9" fill="url(#gd)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </Card>
-
-        {/* Live alerts for internal staff — access summary for restricted roles */}
-        {isInternal ? (
-          <Card
-            title={isAr ? 'التنبيهات المباشرة' : 'Live Alerts'}
-            actions={<Badge tone="rose">2 {isAr ? 'حرجة' : 'CRITICAL'}</Badge>}
-          >
-            <div className="space-y-2.5 max-h-[248px] overflow-y-auto pe-1">
-              {alerts.map((a, i) => (
-                <div
-                  key={a.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openAlert(i)}
-                  onKeyDown={(e) => e.key === 'Enter' && openAlert(i)}
-                  className={`rounded-lg border p-2.5 text-xs leading-relaxed cursor-pointer transition-colors ${
-                    a.level === 'critical' ? 'border-rose-200 bg-rose-50/70 hover:bg-rose-50 hover:border-rose-300'
-                    : a.level === 'warning' ? 'border-amber-200 bg-amber-50/70 hover:bg-amber-50 hover:border-amber-300'
-                    : 'border-sky-200 bg-sky-50/70 hover:bg-sky-50 hover:border-sky-300'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Badge tone={a.level === 'critical' ? 'rose' : a.level === 'warning' ? 'amber' : 'sky'}>
-                      {a.level === 'critical' && <AlertTriangle size={10} />}
-                      {a.level}
-                    </Badge>
-                    <span className="text-slate-400 text-[10px]">{isAr ? a.timeAr : a.time}</span>
-                  </div>
-                  <p className="text-slate-600">{isAr ? a.textAr : a.text}</p>
-                  <p className="text-brand-600 mt-1 flex items-center gap-1 font-medium hover:text-brand-700">
-                    {isAr ? 'عرض التحليل' : 'Open impact analysis'} <ArrowUpRight size={11} />
-                  </p>
-                </div>
-              ))}
-            </div>
-          </Card>
-        ) : (
-          <Card
-            title={isAr ? 'صلاحيات وصولك' : 'Your Access'}
-            subtitle={`${role.id} — ${isAr ? role.nameAr : role.name}`}
-            actions={<Badge tone="slate"><LayoutGrid size={10} /> {role.modules.length}/14</Badge>}
-          >
-            <div className="space-y-1.5 max-h-[248px] overflow-y-auto pe-1">
-              {role.modules.map((m) => (
-                <div key={m} className="flex items-center gap-2.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-700">
-                  <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                  {t(moduleKey[m])}
-                </div>
-              ))}
-            </div>
-            <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
-              {isAr
-                ? 'وحدات إضافية تتطلب ترقية الدور من مشرف المنصة.'
-                : 'Additional modules require a role upgrade from the platform administrator.'}
-            </p>
-          </Card>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
-        {/* Doc types donut — interactive legend + segment drill-down */}
-        <Card title={isAr ? 'قاعدة المعرفة حسب النوع' : 'Knowledge Base by Type'} subtitle="11,440 docs">
-          <ResponsiveContainer width="100%" height={160}>
-            <PieChart>
-              <Pie
-                data={docTypes}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={42}
-                outerRadius={68}
-                paddingAngle={2}
-                strokeWidth={0}
-                onClick={(_, idx) => setDocTypeIdx(idx)}
-                style={{ cursor: 'pointer' }}
+      {/* Bento Grid Row 1: Core Performance & Operations */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
+        {/* Main Performance Panel (2/3 width) */}
+        <div className="lg:col-span-8 bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between group overflow-hidden relative min-h-[220px]">
+          <Activity className="absolute top-4 end-4 w-28 h-28 text-slate-100/50 dark:text-slate-200/40 pointer-events-none transition-transform duration-700 group-hover:scale-110" />
+          
+          <div>
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 relative z-20 whitespace-nowrap truncate">
+              {isAr ? 'مؤشرات الأداء الرئيسية' : 'Core Performance Indicators'}
+            </h3>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 relative z-10">
+              {/* Metric 1: Total Documents */}
+              <div 
+                onClick={() => openKpi('/knowledge-base')}
+                className="space-y-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-100/60 p-3 rounded-2xl transition-all"
+                title={isAr ? 'اتجاه الوثائق: 11,128 -> 11,200 -> 11,310 -> 11,440 (+312 هذا الأسبوع)' : 'Documents Trend: 11,128 -> 11,200 -> 11,310 -> 11,440 (+312 this week)'}
               >
-                {docTypes.map((d, i) => (
-                  <Cell
-                    key={d.name}
-                    fill={d.color}
-                    opacity={docTypeIdx === i ? 1 : 0.55}
-                    stroke={docTypeIdx === i ? d.color : 'transparent'}
-                    strokeWidth={docTypeIdx === i ? 2 : 0}
-                  />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={chartTooltip}
-                formatter={(value, name) => {
-                  const n = typeof value === 'number' ? value : Number(value ?? 0)
-                  return [`${n.toLocaleString()} (${((n / 11440) * 100).toFixed(1)}%)`, String(name ?? '')]
-                }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+                <div className="flex justify-between items-center">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase">{isAr ? 'إجمالي الوثائق' : 'Total Documents'}</span>
+                  <FileText size={14} className="text-emerald-500" />
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-slate-800 dark:text-slate-800">11,440</span>
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-600 flex items-center gap-0.5">+312 <ArrowUpRight size={10} /></span>
+                </div>
+                <div className="h-6 w-full mt-2">
+                  <svg className="w-full h-full overflow-visible text-emerald-500/35 dark:text-emerald-500/35" preserveAspectRatio="none" viewBox="0 0 100 20">
+                    <path d="M0 15 Q 10 5, 20 12 T 40 8 T 60 15 T 80 5 T 100 12" fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                  </svg>
+                </div>
+              </div>
 
-          {/* Custom legend — fixes cramped concatenated labels */}
-          <div className="grid grid-cols-2 gap-1.5 mt-1">
-            {docTypes.map((d, i) => (
+              {/* Metric 2: AI Queries Today */}
+              {p.chat && (
+                <div 
+                  onClick={() => openKpi('/assistant')}
+                  className="space-y-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-100/60 p-3 rounded-2xl transition-all"
+                  title={isAr ? 'اتجاه الاستعلامات: 1,800 -> 2,100 -> 2,250 -> 2,463 (+18% اليوم)' : 'AI Queries Trend: 1,800 -> 2,100 -> 2,250 -> 2,463 (+18% today)'}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase">{isAr ? 'استعلامات الذكاء اليوم' : 'AI Queries Today'}</span>
+                    <Bot size={14} className="text-sky-500" />
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-slate-800 dark:text-slate-800">2,463</span>
+                    <span className="text-[10px] font-semibold text-sky-600 dark:text-sky-600 flex items-center gap-0.5">+18% <ArrowUpRight size={10} /></span>
+                  </div>
+                  <div className="h-6 w-full mt-2">
+                    <svg className="w-full h-full overflow-visible text-sky-500/35 dark:text-sky-500/35" preserveAspectRatio="none" viewBox="0 0 100 20">
+                      <path d="M0 10 Q 15 18, 30 10 T 60 5 T 100 15" fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+
+              {/* Metric 3: Active Users */}
+              {isMgmt && (
+                <div 
+                  onClick={() => openKpi('/admin')}
+                  className="space-y-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-100/60 p-3 rounded-2xl transition-all"
+                  title={isAr ? 'اتجاه النشاط: 260 -> 275 -> 280 -> 284 (+9% مستخدم)' : 'Active Users Trend: 260 -> 275 -> 280 -> 284 (+9% active)'}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase">{isAr ? 'مستخدمون نشطون' : 'Active Users'}</span>
+                    <Users size={14} className="text-violet-500" />
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold text-slate-800 dark:text-slate-800">284</span>
+                    <span className="text-[10px] font-semibold text-violet-600 dark:text-violet-600 flex items-center gap-0.5">+9% <ArrowUpRight size={10} /></span>
+                  </div>
+                  <div className="h-6 w-full mt-2">
+                    <svg className="w-full h-full overflow-visible text-violet-500/35 dark:text-violet-500/35" preserveAspectRatio="none" viewBox="0 0 100 20">
+                      <path d="M0 5 Q 20 15, 40 5 T 70 12 T 100 8" fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Operational Signals Card (1/3 width) */}
+        <div className="lg:col-span-4 bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3.5">
+              {isAr ? 'العمليات النشطة' : 'Active Operations'}
+            </h3>
+            
+            <div className="space-y-2.5">
+              {/* Item: Searches / Week */}
+              <div 
+                onClick={() => openKpi('/search')}
+                className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-100/60 cursor-pointer transition-colors"
+                title={isAr ? 'افتح البحث المؤسسي' : 'Open Enterprise Search'}
+              >
+                <div className="flex items-center gap-2">
+                  <Search size={14} className="text-slate-400" />
+                  <span className="text-xs text-slate-600 dark:text-slate-600">{isAr ? 'عمليات بحث / أسبوع' : 'Searches / Week'}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <svg className="w-10 h-3 text-emerald-500 cursor-help" viewBox="0 0 50 10">
+                    <title>{isAr ? 'اتجاه البحث الأسبوعي: ٢٣,٤ ألف استعلام' : 'Weekly searches: 23.4K queries'}</title>
+                    <path d="M0 8 L 10 4 L 20 6 L 30 2 L 40 5 L 50 1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-800">23.4K</span>
+                </div>
+              </div>
+
+              {/* Item: Processing Queue */}
+              {(p.upload || isMgmt) && (
+                <div 
+                  onClick={() => openKpi('/ocr')}
+                  className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-100/60 cursor-pointer transition-colors"
+                  title={isAr ? 'افتح وحدة OCR' : 'Open OCR Module'}
+                >
+                  <div className="flex items-center gap-2">
+                    <Timer size={14} className="text-slate-400" />
+                    <span className="text-xs text-slate-600 dark:text-slate-600">{isAr ? 'قائمة المعالجة' : 'Processing Queue'}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <svg className="w-10 h-3 text-amber-500 cursor-help" viewBox="0 0 50 10">
+                      <title>{isAr ? 'المهام قيد المعالجة: ٤٧ مهمة' : 'Active queue processing: 47 jobs'}</title>
+                      <path d="M0 8 L 10 2 L 20 5 L 30 1 L 40 9 L 50 4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-800">47</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Item: Reviews Completed */}
+              {canReview && (
+                <div 
+                  onClick={() => openKpi('/review')}
+                  className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-100/60 cursor-pointer transition-colors"
+                  title={isAr ? 'افتح مراجعة الوثائق' : 'Open Document Review'}
+                >
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-slate-400" />
+                    <span className="text-xs text-slate-600 dark:text-slate-600">{isAr ? 'مراجعات مكتملة' : 'Reviews Completed'}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <svg className="w-10 h-3 text-emerald-500 cursor-help" viewBox="0 0 50 10">
+                      <title>{isAr ? 'المراجعات المكتملة: ١,٢٠٨ وثيقة' : 'Total completed reviews: 1,208 documents'}</title>
+                      <path d="M0 5 L 15 2 L 25 8 L 35 1 L 50 4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-800">1,208</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Item: Active Workflows */}
+              {canWorkflows && (
+                <div 
+                  onClick={() => openKpi('/workflows')}
+                  className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-100/60 cursor-pointer transition-colors"
+                  title={isAr ? 'افتح أتمتة سير العمل' : 'Open Workflow Automation'}
+                >
+                  <div className="flex items-center gap-2">
+                    <GitBranch size={14} className="text-slate-400" />
+                    <span className="text-xs text-slate-600 dark:text-slate-600">{isAr ? 'سير عمل نشط' : 'Active Workflows'}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <svg className="w-10 h-3 text-sky-500 cursor-help" viewBox="0 0 50 10">
+                      <title>{isAr ? 'سير العمل النشط: ٣٦ مساراً' : 'Active workflows: 36 pipelines'}</title>
+                      <path d="M0 2 L 10 5 L 25 2 L 40 8 L 50 5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-800">36</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Item: Model Accuracy */}
+              {isMgmt && (
+                <div 
+                  onClick={() => openKpi('/admin')}
+                  className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-100/60 cursor-pointer transition-colors"
+                  title={isAr ? 'افتح الإدارة والأمان' : 'Open Admin & Security'}
+                >
+                  <div className="flex items-center gap-2">
+                    <Gauge size={14} className="text-slate-400" />
+                    <span className="text-xs text-slate-600 dark:text-slate-600">{isAr ? 'دقة النموذج' : 'Model Accuracy'}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <svg className="w-10 h-3 text-emerald-500 cursor-help" viewBox="0 0 50 10">
+                      <title>{isAr ? 'اتجاه دقة مطابقة النموذج: ٩٦,٢٪' : 'Model accuracy trend: 96.2%'}</title>
+                      <path d="M0 9 L 10 8 L 30 7 L 40 8 L 50 9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-800">96.2%</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bento Grid Row 2: Charts & Live Timeline */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
+        {/* Data Laboratory Tabbed Card (2/3 width) */}
+        <div className="lg:col-span-8 bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between h-[410px]">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-[15px] font-bold text-slate-800 dark:text-slate-800">
+                {chartTab === 'usage'
+                  ? (isAr ? 'استخدام الذكاء الاصطناعي — 7 أيام' : 'AI Usage — Last 7 Days')
+                  : chartTab === 'air'
+                    ? (isAr ? 'جودة الهواء — الاتجاه والتنبؤ' : 'Air Quality — Trend & Forecast')
+                    : (isAr ? 'تحليلات البحث' : 'Search Analytics')
+                }
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {chartTab === 'usage'
+                  ? (isAr ? 'الاستعلامات والوثائق المعالجة يومياً' : 'Daily queries and documents processed')
+                  : chartTab === 'air'
+                    ? (isAr ? 'PM10 و NO₂ مع تنبؤ ٣ أشهر (*)' : 'PM10 & NO₂ with 3-month forecast (*)')
+                    : (isAr ? 'حسب نوع البحث — 30 يوم' : 'By search mode — 30 days')
+                }
+              </p>
+            </div>
+            
+            <div className="flex bg-slate-100 dark:bg-slate-100 rounded-lg p-0.5 border border-slate-200/50 dark:border-slate-200/50">
               <button
-                key={d.name}
                 type="button"
-                onClick={() => setDocTypeIdx(i)}
-                className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] text-start transition-colors cursor-pointer ${
-                  docTypeIdx === i
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800 font-semibold'
-                    : 'text-slate-500 hover:bg-slate-50 border border-transparent'
+                onClick={() => setChartTab('usage')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                  chartTab === 'usage' ? 'bg-white dark:bg-white text-slate-900 shadow-sm' : 'text-slate-50 hover:text-slate-900'
                 }`}
               >
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
-                <span className="truncate">{isAr ? d.ar : d.name}</span>
+                {isAr ? 'الاستخدام' : 'Usage'}
               </button>
-            ))}
+              {isMgmt && (
+                <button
+                  type="button"
+                  onClick={() => setChartTab('air')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                    chartTab === 'air' ? 'bg-white dark:bg-white text-slate-900 shadow-sm' : 'text-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  {isAr ? 'جودة الهواء' : 'Air Quality'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setChartTab('search')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                  chartTab === 'search' ? 'bg-white dark:bg-white text-slate-900 shadow-sm' : 'text-slate-50 hover:text-slate-900'
+                }`}
+              >
+                {isAr ? 'البحث' : 'Search'}
+              </button>
+            </div>
           </div>
 
-        </Card>
-
-        {/* Accuracy trend — management only */}
-        {isMgmt && (
-          <Card title={isAr ? 'دقة النموذج مقابل الهلوسة' : 'Accuracy vs. Hallucination'} subtitle={isAr ? 'تحسن مستمر عبر التعلم من الملاحظات' : 'RLHF continuous improvement'}>
-            <ResponsiveContainer width="100%" height={210}>
-              <LineChart data={accuracyTrend}>
-                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="week" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} domain={[0, 100]} />
-                <Tooltip contentStyle={chartTooltip} />
-                <Line type="monotone" dataKey="accuracy" name={isAr ? 'الدقة %' : 'Accuracy %'} stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
-                <Line type="monotone" dataKey="hallucination" name={isAr ? 'الهلوسة %' : 'Hallucination %'} stroke="#f43f5e" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </Card>
-        )}
-
-        {/* Air quality — management only */}
-        {isMgmt && (
-          <Card
-            className="xl:col-span-2"
-            title={isAr ? 'جودة الهواء — الاتجاه والتنبؤ' : 'Air Quality — Trend & Forecast'}
-            subtitle={isAr ? 'PM10 و NO₂ مع تنبؤ ٣ أشهر (*)' : 'PM10 & NO₂ with 3-month forecast (*)'}
-          >
-            <ResponsiveContainer width="100%" height={290}>
-              <ComposedChart data={monthlyAir}>
-                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="m" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={chartTooltip} />
-                <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
-                <ReferenceLine y={120} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: isAr ? 'الحد النظامي' : 'Regulatory limit', fill: '#f43f5e', fontSize: 10 }} />
-                <Bar dataKey="pm10" name="PM10 µg/m³" fill="#10b981" radius={[4, 4, 0, 0]} barSize={18} />
-                <Bar dataKey="no2" name="NO₂ ppb" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={18} />
-                <Line dataKey="forecast" name={isAr ? 'تنبؤ PM10' : 'PM10 forecast'} stroke="#d97706" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 4 }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </Card>
-        )}
-      </div>
-
-      {(p.upload || isMgmt) && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {/* Processing queue */}
-          <Card title={isAr ? 'قائمة المعالجة' : 'Processing Queue'} subtitle={isAr ? 'المهام الجارية الآن' : 'Currently running jobs'} actions={<Badge tone="amber">47 {isAr ? 'قيد الانتظار' : 'queued'}</Badge>}>
-            <div className="space-y-3.5">
-              {queue.map((q) => (
-                <div key={q.name}>
-                  <div className="flex justify-between items-center text-xs mb-1.5">
-                    <span className="text-slate-700 font-medium truncate pe-3">{q.name}</span>
-                    <span className="text-slate-400 whitespace-nowrap">{q.stage} · {q.pct}%</span>
-                  </div>
-                  <ProgressBar value={q.pct} tone={q.tone} />
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Search analytics */}
-            <Card title={isAr ? 'تحليلات البحث' : 'Search Analytics'} subtitle={isAr ? 'حسب نوع البحث — 30 يوم' : 'By search mode — 30 days'}>
-              <ResponsiveContainer width="100%" height={210}>
+          <div className="flex-1 min-h-0 mt-4 relative">
+            {chartTab === 'usage' && (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={aiUsage}>
+                  <defs>
+                    <linearGradient id="gq" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.2} />
+                      <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="day" stroke="var(--chart-axis)" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="var(--chart-axis)" fontSize={11} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={chartTooltip} />
+                  <Area type="monotone" dataKey="queries" name={isAr ? 'استعلامات' : 'Queries'} stroke="#10b981" fill="url(#gq)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="docs" name={isAr ? 'وثائق معالجة' : 'Docs Processed'} stroke="#0ea5e9" fill="url(#gd)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+            {chartTab === 'air' && isMgmt && (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={monthlyAir}>
+                  <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="m" stroke="var(--chart-axis)" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="var(--chart-axis)" fontSize={11} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={chartTooltip} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: '#64748b' }} />
+                  <ReferenceLine y={120} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: isAr ? 'الحد النظامي' : 'Regulatory limit', fill: '#f43f5e', fontSize: 10 }} />
+                  <Bar dataKey="pm10" name="PM10 µg/m³" fill="#10b981" radius={[4, 4, 0, 0]} barSize={18} />
+                  <Bar dataKey="no2" name="NO₂ ppb" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={18} />
+                  <Line dataKey="forecast" name={isAr ? 'تنبؤ PM10' : 'PM10 forecast'} stroke="#d97706" strokeWidth={2} strokeDasharray="6 4" dot={{ r: 4 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+            {chartTab === 'search' && (
+              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={searchAnalytics} layout="vertical" margin={{ left: 10 }}>
-                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis type="category" dataKey="type" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} width={70} />
+                  <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" stroke="var(--chart-axis)" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis type="category" dataKey="type" stroke="var(--chart-axis)" fontSize={11} tickLine={false} axisLine={false} width={70} />
                   <Tooltip contentStyle={chartTooltip} />
                   <Bar dataKey="count" name={isAr ? 'عمليات البحث' : 'Searches'} radius={[0, 6, 6, 0]} barSize={22}>
                     <Cell fill="#10b981" /><Cell fill="#0ea5e9" /><Cell fill="#8b5cf6" />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
-
-            {/* Department activity — management only */}
-            {isMgmt && (
-              <Card title={isAr ? 'نشاط الإدارات' : 'User Activity by Department'} subtitle={isAr ? 'نسبة التبني' : 'Adoption rate'}>
-                <div className="space-y-3 pt-1">
-                  {deptActivity.map((d) => (
-                    <div key={d.dept}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-600">{isAr ? d.ar : d.dept}</span>
-                        <span className="text-slate-500 font-semibold">{d.usage}%</span>
-                      </div>
-                      <ProgressBar value={d.usage} tone={d.usage > 80 ? 'emerald' : d.usage > 60 ? 'sky' : 'amber'} />
-                    </div>
-                  ))}
-                </div>
-              </Card>
             )}
           </div>
         </div>
-      )}
+
+        {/* Live Timeline Stream / Access Summary Card (1/3 width) */}
+        <div className="lg:col-span-4 bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between h-[410px]">
+          <div>
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-5">
+              {isInternal ? (isAr ? 'التنبيهات المباشرة' : 'Live Activity') : (isAr ? 'صلاحيات وصولك' : 'Your Access')}
+            </h3>
+            
+            {isInternal ? (
+              <div className="space-y-4 max-h-[300px] overflow-y-auto pe-1 relative custom-scrollbar">
+                {alerts.map((a, i) => (
+                  <div key={a.id} className="flex gap-3.5 relative group">
+                    {/* Timeline dotted vertical connector */}
+                    {i < alerts.length - 1 && (
+                      <div className="absolute top-[20px] start-[7px] bottom-[-24px] w-px border-s border-dashed border-slate-200/70 dark:border-slate-200/50 pointer-events-none"></div>
+                    )}
+                    {/* Timeline pulsing status dot */}
+                    <div className={`relative z-10 w-3.5 h-3.5 mt-1 rounded-full flex items-center justify-center shrink-0 ${
+                      a.level === 'critical' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]'
+                      : a.level === 'warning' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                      : 'bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.5)]'
+                    }`}>
+                      {a.level === 'critical' && <div className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></div>}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-baseline gap-1.5">
+                        <p 
+                          onClick={() => openAlert(i)}
+                          className="text-xs font-bold text-slate-800 dark:text-slate-800 cursor-pointer hover:text-brand-600 leading-snug"
+                        >
+                          {isAr ? a.titleAr : a.title}
+                        </p>
+                        <span className="text-[9px] text-slate-400 whitespace-nowrap shrink-0">{isAr ? a.timeAr : a.time}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-snug mt-1">
+                        {isAr ? a.textAr : a.text}
+                      </p>
+                      <span 
+                        onClick={() => openAlert(i)}
+                        className="text-[10px] text-brand-600 font-semibold cursor-pointer hover:underline mt-1 block"
+                      >
+                        {isAr ? 'عرض التحليل' : 'Open impact analysis'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pe-1 custom-scrollbar">
+                {role.modules.map((m) => (
+                  <div key={m} className="flex items-center gap-2.5 rounded-xl bg-slate-50 dark:bg-slate-100 border border-slate-100 dark:border-slate-200/40 px-3 py-2 text-xs text-slate-700 dark:text-slate-700">
+                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                    <span className="truncate">{t(moduleKey[m])}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bento Grid Row 3: Deep Diagnostics & Systems */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        {/* Knowledge Base Donut Card (2 columns) */}
+        <div className="md:col-span-2 bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">
+            {isAr ? 'قاعدة المعرفة حسب النوع' : 'Knowledge Base by Type'}
+          </h3>
+          
+          <div className="flex flex-col sm:flex-row items-center gap-6">
+            <div className="relative w-36 h-36 shrink-0 flex items-center justify-center">
+              <PieChart width={144} height={144}>
+                <Pie
+                  data={docTypes}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={36}
+                  outerRadius={56}
+                  paddingAngle={3}
+                  strokeWidth={0}
+                  onClick={(_, idx) => setDocTypeIdx(idx)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {docTypes.map((d, i) => (
+                    <Cell
+                      key={d.name}
+                      fill={d.color}
+                      opacity={docTypeIdx === i ? 1 : 0.55}
+                      stroke={docTypeIdx === i ? d.color : 'transparent'}
+                      strokeWidth={docTypeIdx === i ? 2 : 0}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={chartTooltip}
+                  formatter={(value, name) => {
+                    const n = typeof value === 'number' ? value : Number(value ?? 0)
+                    return [`${n.toLocaleString()} (${((n / 11440) * 100).toFixed(1)}%)`, String(name ?? '')]
+                  }}
+                />
+              </PieChart>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-xs text-slate-400 font-medium uppercase">{isAr ? 'الوثائق' : 'Docs'}</span>
+                <span className="text-xl font-bold text-slate-800 dark:text-slate-800">11.4K</span>
+              </div>
+            </div>
+            
+            <div className="flex-1 w-full space-y-2">
+              {docTypes.map((d, i) => (
+                <button
+                  key={d.name}
+                  type="button"
+                  onClick={() => setDocTypeIdx(i)}
+                  className={`w-full flex items-center justify-between p-1.5 rounded-lg text-start transition-colors cursor-pointer ${
+                    docTypeIdx === i
+                      ? 'bg-brand-600/5 border border-brand-600/10 text-brand-700 font-semibold'
+                      : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-100/60 border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-xs truncate">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                    <span className="truncate">{isAr ? d.ar : d.name}</span>
+                  </div>
+                  <span className="text-[10px] font-bold shrink-0">{d.pct}%</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* System Queue Load Card (1 column) */}
+        <div className="bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">
+              {isAr ? 'قائمة المعالجة' : 'Queue Load'}
+            </h3>
+            
+            <div className="space-y-4">
+              {queue.map((q) => (
+                <div key={q.name} className="space-y-1">
+                  <div className="flex justify-between items-center text-[10px] font-semibold text-slate-500">
+                    <span className="truncate max-w-[150px]" title={q.name}>{q.name}</span>
+                    <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] ${
+                      q.tone === 'sky' ? 'bg-sky-50 text-sky-600'
+                      : q.tone === 'violet' ? 'bg-violet-50 text-violet-600'
+                      : 'bg-emerald-50 text-emerald-600'
+                    }`}>{q.pct}%</span>
+                  </div>
+                  <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full ${
+                        q.tone === 'sky' ? 'bg-sky-500'
+                        : q.tone === 'violet' ? 'bg-violet-500'
+                        : 'bg-emerald-500'
+                      }`} 
+                      style={{ width: `${q.pct}%` }}
+                    ></div>
+                  </div>
+                </div>
+              ))}
+
+              {isMgmt && (
+                <div className="border-t border-slate-100 pt-3.5 mt-3.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-2">{isAr ? 'نشاط الإدارات' : 'Department Activity'}</span>
+                  <div className="space-y-2">
+                    {deptActivity.map((d) => (
+                      <div key={d.dept} className="space-y-1">
+                        <div className="flex justify-between items-center text-[10px] text-slate-500">
+                          <span>{isAr ? d.ar : d.dept}</span>
+                          <span className="font-bold">{d.usage}%</span>
+                        </div>
+                        <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full ${d.usage > 80 ? 'bg-emerald-500' : d.usage > 60 ? 'bg-sky-500' : 'bg-amber-500'}`} 
+                            style={{ width: `${d.usage}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Integrity Accuracy Ring Card (1 column) */}
+        <div className="bg-white/95 dark:bg-slate-50 border border-slate-200/60 dark:border-slate-200/60 rounded-3xl p-6 shadow-sm shadow-slate-100 dark:shadow-none flex flex-col justify-between items-center">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider self-start">
+            {isAr ? 'دقة دمج المعلومات' : 'Model Integrity'}
+          </h3>
+          
+          <div className="relative flex items-center justify-center my-3 shrink-0">
+            <svg className="w-28 h-28 transform -rotate-90 cursor-help">
+              <title>{isAr ? 'دقة النموذج الحالية: ٩٦,٢٪ مطابقة' : 'Model accuracy index: 96.2% matching'}</title>
+              <circle className="text-slate-100" cx="56" cy="56" fill="transparent" r="46" stroke="currentColor" strokeWidth="6" />
+              <circle className="text-brand-600" cx="56" cy="56" fill="transparent" r="46" stroke="currentColor" strokeWidth="6" strokeDasharray="289" strokeDashoffset={289 * (1 - 0.962)} strokeLinecap="round" />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-lg font-black text-brand-600">96.2%</span>
+              <span className="text-[9px] text-slate-400 font-semibold uppercase">{isAr ? 'دقة مطابقة' : 'Accurate'}</span>
+            </div>
+          </div>
+          
+          <div className="w-full">
+            <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">{isAr ? 'اتجاه الثقة' : 'Confidence Trend'}</span>
+            <div className="h-8 w-full">
+              <svg 
+                className="w-full h-full text-brand-600/30 overflow-visible cursor-help" 
+                preserveAspectRatio="none" 
+                viewBox="0 0 100 20"
+              >
+                <title>{isAr ? 'تطور دقة النموذج التاريخي: ٩٥,٨٪ -> ٩٦,٠٪ -> ٩٦,٢٪' : 'Historical confidence trend: 95.8% -> 96.0% -> 96.2%'}</title>
+                <polyline fill="none" points={accuracyPointsStr} stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Live alert — impact analysis */}
       <Modal

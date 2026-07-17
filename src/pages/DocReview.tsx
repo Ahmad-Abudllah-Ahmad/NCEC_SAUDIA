@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  FileSearch, CheckCircle2, XCircle, AlertTriangle, Wand2,
+  FileSearch, CheckCircle2, AlertTriangle, Wand2,
   ClipboardCheck, ScrollText, Replace, ScanSearch,
 } from 'lucide-react'
 import { PageHeader, Card, Badge, Button, KpiCard, ProgressBar, Modal } from '../components/ui'
@@ -9,6 +9,7 @@ import { useRole } from '../roles'
 
 const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
 
+/*
 const checks = [
   { name: 'Completeness Check', ar: 'فحص الاكتمال', result: 'warn', detail: '2 mandatory annexes missing', detailAr: 'ملحقان إلزاميان مفقودان' },
   { name: 'Regulatory Compliance', ar: 'الالتزام التنظيمي', result: 'warn', detail: '1 clause conflicts with Exec. Reg. Art. 14', detailAr: 'بند يتعارض مع اللائحة التنفيذية م١٤' },
@@ -17,6 +18,7 @@ const checks = [
   { name: 'Missing Clauses', ar: 'البنود المفقودة', result: 'warn', detail: 'Penalty escalation clause absent', detailAr: 'بند تصعيد العقوبات غائب' },
   { name: 'Formatting & Structure', ar: 'التنسيق والهيكل', result: 'pass', detail: 'Template NCEC-POL-02 preserved', detailAr: 'تم الحفاظ على القالب المعتمد' },
 ]
+*/
 
 const initialFindings = [
   {
@@ -135,25 +137,7 @@ export default function DocReview() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         {/* Active review */}
         <div className="xl:col-span-2 space-y-4">
-          <Card
-            title={isAr ? 'المراجعة النشطة — سياسة النفايات الخطرة ٢٫٢' : 'Active Review — Hazardous Waste Policy v2.2'}
-            subtitle={isAr ? 'مقارنة مع 28 معياراً و744 وثيقة تنظيمية' : 'Checked against 28 standards and 744 regulatory instruments'}
-            actions={<Badge tone={readiness > 85 ? 'emerald' : 'amber'}>{isAr ? 'درجة الجاهزية' : 'Readiness'} {readiness}%</Badge>}
-          >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-              {checks.map((c) => (
-                <div key={c.name} className="flex items-start gap-2.5 rounded-lg bg-slate-50 border border-slate-200 p-3">
-                  {c.result === 'pass' && <CheckCircle2 size={16} className="text-emerald-600 mt-0.5 shrink-0" />}
-                  {c.result === 'warn' && <AlertTriangle size={16} className="text-amber-600 mt-0.5 shrink-0" />}
-                  {c.result === 'fail' && <XCircle size={16} className="text-rose-500 mt-0.5 shrink-0" />}
-                  <div>
-                    <p className="text-xs font-semibold text-slate-800">{isAr ? c.ar : c.name}</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5" dir="auto">{isAr ? c.detailAr : c.detail}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+
 
           <Card title={isAr ? 'الملاحظات والتصحيحات المقترحة' : 'Findings & Suggested Corrections'} subtitle={isAr ? 'اضغط "تطبيق" لإدراج الصياغة البديلة' : 'Click "Apply" to insert the alternative wording'}>
             <div className="space-y-3">

@@ -22,7 +22,7 @@ export type Role = {
 const ALL = [
   '/', '/assistant', '/legal-assistant', '/search', '/data-analysis',
   '/knowledge-base', '/environmental-studies', '/regulatory', '/generation',
-  '/review', '/ocr', '/recommendations', '/workflows', '/admin',
+  '/review', '/ocr', '/recommendations', '/workflows', '/admin', '/dashboard',
 ]
 
 export const ROLES: Role[] = [
@@ -39,32 +39,32 @@ export const ROLES: Role[] = [
   {
     id: 'ROLE-03', name: 'Reviewer', nameAr: 'مراجع', users: 38,
     perms: { upload: true, chat: true, generate: true, approve: false, admin: false },
-    modules: ['/', '/assistant', '/search', '/knowledge-base', '/environmental-studies', '/regulatory', '/review', '/recommendations', '/workflows'],
+    modules: ['/', '/assistant', '/search', '/knowledge-base', '/environmental-studies', '/regulatory', '/review', '/recommendations', '/workflows', '/dashboard'],
   },
   {
     id: 'ROLE-04', name: 'Legal Team', nameAr: 'الفريق القانوني', users: 21,
     perms: { upload: true, chat: true, generate: true, approve: false, admin: false },
-    modules: ['/', '/assistant', '/legal-assistant', '/search', '/knowledge-base', '/regulatory', '/generation', '/review', '/workflows'],
+    modules: ['/', '/assistant', '/legal-assistant', '/search', '/knowledge-base', '/regulatory', '/generation', '/review', '/workflows', '/dashboard'],
   },
   {
     id: 'ROLE-05', name: 'Technical Team', nameAr: 'الفريق الفني', users: 44,
     perms: { upload: true, chat: true, generate: false, approve: false, admin: false },
-    modules: ['/', '/assistant', '/search', '/data-analysis', '/knowledge-base', '/ocr', '/workflows'],
+    modules: ['/', '/assistant', '/search', '/data-analysis', '/knowledge-base', '/ocr', '/workflows', '/dashboard'],
   },
   {
     id: 'ROLE-06', name: 'Environmental Team', nameAr: 'الفريق البيئي', users: 57,
     perms: { upload: true, chat: true, generate: false, approve: false, admin: false },
-    modules: ['/', '/assistant', '/search', '/data-analysis', '/knowledge-base', '/environmental-studies', '/ocr', '/workflows'],
+    modules: ['/', '/assistant', '/search', '/data-analysis', '/knowledge-base', '/environmental-studies', '/ocr', '/workflows', '/dashboard'],
   },
   {
     id: 'ROLE-07', name: 'External Consultant', nameAr: 'استشاري خارجي', users: 9,
     perms: { upload: false, chat: true, generate: false, approve: false, admin: false },
-    modules: ['/', '/assistant', '/search', '/knowledge-base'],
+    modules: ['/', '/assistant', '/search', '/knowledge-base', '/dashboard'],
   },
   {
     id: 'ROLE-08', name: 'Read Only', nameAr: 'قراءة فقط', users: 100,
     perms: { upload: false, chat: false, generate: false, approve: false, admin: false },
-    modules: ['/', '/search', '/knowledge-base'],
+    modules: ['/', '/search', '/knowledge-base', '/dashboard'],
   },
 ]
 

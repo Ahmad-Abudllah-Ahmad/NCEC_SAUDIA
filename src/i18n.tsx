@@ -32,6 +32,7 @@ export const dict: Dict = {
   ocr: { en: 'OCR Module', ar: 'التعرف الضوئي على الحروف' },
   workflows: { en: 'Workflow Automation', ar: 'أتمتة سير العمل' },
   admin: { en: 'Admin & Security', ar: 'الإدارة والأمان' },
+  interactiveMap: { en: 'Interactive Map', ar: 'الخريطة التفاعلية' },
   // common
   searchPlaceholder: { en: 'Search documents, regulations, studies…', ar: 'ابحث في الوثائق والأنظمة والدراسات…' },
   systemHealthy: { en: 'All Systems Operational', ar: 'جميع الأنظمة تعمل' },

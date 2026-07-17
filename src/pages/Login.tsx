@@ -2,12 +2,14 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
-  Leaf, Lock, Globe, ShieldCheck, Server, Languages, Fingerprint,
+  Lock, Globe, ShieldCheck, Server, Languages, Fingerprint,
   KeyRound, UserCircle2, ArrowRight, Network,
 } from 'lucide-react'
 import { Badge, Button } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole, DEMO_USERS, ROLES } from '../roles'
+import logo from '../assets/logo.png'
+import logoAr from '../assets/logo-ar.png'
 
 export default function Login() {
   const { lang, setLang } = useLang()
@@ -40,7 +42,7 @@ export default function Login() {
       ]
 
   return (
-    <div className="min-h-full flex bg-[#f3f5f9]">
+    <div className="min-h-full flex bg-white">
       {/* Brand panel */}
       <div className="hidden lg:flex w-[46%] flex-col justify-between p-10 bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900 text-white relative overflow-hidden">
         <div className="absolute -top-24 -end-24 w-96 h-96 rounded-full bg-emerald-400/10 blur-2xl" />
@@ -48,8 +50,8 @@ export default function Login() {
 
         <div className="relative">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-white/15 border border-white/25 backdrop-blur flex items-center justify-center">
-              <Leaf size={22} />
+            <div className="w-20 h-20 rounded-2xl bg-white flex items-center justify-center p-2 shadow-sm shrink-0">
+              <img src={lang === 'ar' ? logoAr : logo} alt="Logo" className="w-full h-full object-contain" />
             </div>
             <div>
               <p className="text-base font-bold leading-tight">{isAr ? 'منصة الذكاء الاصطناعي' : 'NCEC AI Platform'}</p>
@@ -102,7 +104,7 @@ export default function Login() {
         <div className="flex-1 flex items-center justify-center px-4 pb-10">
           <form onSubmit={submit} className="w-full max-w-md">
             <div className="lg:hidden flex items-center gap-3 mb-6 justify-center">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center text-white"><Leaf size={19} /></div>
+              <img src={lang === 'ar' ? logoAr : logo} alt="Logo" className="w-16 h-16 object-contain" />
               <div>
                 <p className="text-sm font-bold text-slate-900 leading-tight">{isAr ? 'منصة الذكاء الاصطناعي' : 'NCEC AI Platform'}</p>
                 <p className="text-[10px] text-slate-500">{isAr ? 'ذكاء الوثائق المؤسسي' : 'Enterprise Document Intelligence'}</p>

@@ -11,12 +11,17 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.2",
+    "cesium": "^1.143.0",
     "lucide-react": "^1.23.0",
+    "mapbox-gl": "^3.26.0",
+    "pdfjs-dist": "^6.1.200",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
     "recharts": "^3.9.2",
-    "tailwindcss": "^4.3.2"
+    "tailwindcss": "^4.3.2",
+    "tesseract.js": "^7.0.0",
+    "vite-plugin-cesium": "^1.2.23"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",

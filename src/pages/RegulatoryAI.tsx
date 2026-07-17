@@ -150,10 +150,9 @@ export default function RegulatoryAI() {
           trend={[4, 5, 5, 6, 7, 8, 9]} trendLabels={weeks} />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
+      <div className="mb-4">
         {/* Conflict detection */}
         <Card
-          className="xl:col-span-2"
           title={isAr ? 'كشف التعارضات بين الوثائق' : 'Cross-Document Conflict Detection'}
           subtitle={isAr ? 'مقارنة آلية للبنود عبر التسلسل التشريعي' : 'Automated clause comparison across the legislative hierarchy'}
           actions={<Badge tone="rose"><AlertOctagon size={11} /> {activeConflicts} {isAr ? 'نشطة' : 'active'}</Badge>}
@@ -201,29 +200,6 @@ export default function RegulatoryAI() {
               </div>
             ))}
           </div>
-        </Card>
-
-        {/* Hierarchy */}
-        <Card title={isAr ? 'التسلسل التشريعي' : 'Document Hierarchy'} subtitle={isAr ? 'الذكاء الاصطناعي يفهم مستويات الإلزام' : 'AI understands precedence levels'}>
-          <div className="space-y-2">
-            {hierarchy.map((h) => (
-              <div key={h.level} className="flex items-center gap-3" style={{ paddingInlineStart: (h.level - 1) * 12 }}>
-                <div className="flex items-center gap-2.5 flex-1 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5">
-                  <span className="w-6 h-6 rounded-md bg-brand-600/10 border border-brand-600/30 text-brand-700 text-[11px] font-bold flex items-center justify-center shrink-0">{h.level}</span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-slate-700 truncate">{isAr ? h.ar : h.name}</p>
-                    <p className="text-[10px] text-slate-400">{h.docs} {isAr ? 'وثيقة' : h.docs === 1 ? 'document' : 'documents'}</p>
-                  </div>
-                  <Layers size={13} className="ms-auto text-slate-300" />
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-500 mt-3 leading-relaxed">
-            {isAr
-              ? 'عند كشف تعارض، تُرجح الوثيقة الأعلى في التسلسل ويُقترح تعديل الأدنى.'
-              : 'When a conflict is detected, the higher instrument prevails and amendments are proposed to the lower one.'}
-          </p>
         </Card>
       </div>
 

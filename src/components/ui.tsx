@@ -2,17 +2,17 @@
 import { useId } from 'react'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { TrendingUp, TrendingDown, X } from 'lucide-react'
+import { TrendingUp, TrendingDown, X, Info } from 'lucide-react'
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
 
 /** Shared tooltip style for all recharts tooltips (light theme). */
 export const chartTooltip = {
-  backgroundColor: '#ffffff',
-  border: '1px solid #e2e8f0',
+  backgroundColor: 'var(--chart-tooltip-bg, #ffffff)',
+  border: '1px solid var(--chart-tooltip-border, #e2e8f0)',
   borderRadius: 8,
   fontSize: 12,
-  color: '#0f172a',
-  boxShadow: '0 8px 24px rgba(15,23,42,0.1)',
+  color: 'var(--chart-tooltip-text, #0f172a)',
+  boxShadow: '0 8px 24px rgba(15,23,42,0.15)',
 } as const
 
 type Accent = 'emerald' | 'sky' | 'amber' | 'violet' | 'rose'
@@ -33,6 +33,121 @@ const accentChip: Record<Accent, string> = {
   rose: 'text-rose-600 bg-rose-50 border-rose-200',
 }
 
+const PAGE_INFO_MAP: Record<string, { flow: string, bullets: string[] }> = {
+  'Management Dashboard': {
+    flow: 'Data Ingestion ➔ AI Processing ➔ KPI Aggregation ➔ Real-time Display',
+    bullets: [
+      'Collects metrics across all branches',
+      'AI predicts trends and highlights anomalies',
+      'Provides a high-level executive view'
+    ]
+  },
+  'AI Document Assistant': {
+    flow: 'User Query ➔ Semantic Search ➔ Context Retrieval ➔ LLM Gen ➔ Answer',
+    bullets: [
+      'Uses advanced RAG (Retrieval-Augmented Gen)',
+      'Searches through thousands of NCEC documents',
+      'Cites original sources for accuracy'
+    ]
+  },
+  'AI Legal Assistant': {
+    flow: 'Legal Query ➔ DB Search ➔ Compliance Check ➔ Legal Analysis ➔ Result',
+    bullets: [
+      'Trained on Saudi Environmental Law',
+      'Automatically cross-references regulations',
+      'Helps ensure strict compliance'
+    ]
+  },
+  'Enterprise Search': {
+    flow: 'Search Query ➔ Neural Embedding ➔ Vector Match ➔ Ranking ➔ Unified View',
+    bullets: [
+      'Cross-platform semantic search',
+      'Understands context, not just keywords',
+      'Filters by department, date, and relevance'
+    ]
+  },
+  'Data Analysis': {
+    flow: 'Raw Data ➔ Data Cleaning ➔ Stat Modeling ➔ Pattern Rec ➔ Visual Insights',
+    bullets: [
+      'Processes massive environmental datasets',
+      'Identifies hidden correlations',
+      'Generates exportable visual reports'
+    ]
+  },
+  'Knowledge Base': {
+    flow: 'Doc Upload ➔ Text Extract ➔ Vectorization ➔ Indexing ➔ Searchable KB',
+    bullets: [
+      'Central repository for all NCEC guidelines',
+      'Auto-categorizes new uploads',
+      'Maintains version control'
+    ]
+  },
+  'Environmental Studies': {
+    flow: 'Study Submit ➔ Meta Extract ➔ QA ➔ AI Summary ➔ Report Gen',
+    bullets: [
+      'Tracks ongoing environmental assessments',
+      'Extracts key findings automatically',
+      'Standardizes reporting formats'
+    ]
+  },
+  'Regulatory & Legal AI': {
+    flow: 'Regulation Update ➔ Impact Analysis ➔ Policy Alignment ➔ Notification',
+    bullets: [
+      'Monitors changes in environmental policies',
+      'Assesses impact on current operations',
+      'Flags non-compliant areas automatically'
+    ]
+  },
+  'Document Generation': {
+    flow: 'User Prompt ➔ Template Select ➔ AI Content Gen ➔ Review ➔ Final PDF',
+    bullets: [
+      'Automates repetitive report writing',
+      'Uses approved NCEC templates',
+      'Saves hundreds of hours of manual typing'
+    ]
+  },
+  'Document Review': {
+    flow: 'Upload Draft ➔ AI Proofread ➔ Fact Check ➔ Suggestion Engine ➔ Final Polish',
+    bullets: [
+      'Checks for tone, clarity, and legal accuracy',
+      'Flags missing information',
+      'Ensures brand consistency'
+    ]
+  },
+  'OCR Module': {
+    flow: 'Scanned File ➔ Pre-processing ➔ Text Rec ➔ Data Extract ➔ Searchable Text',
+    bullets: [
+      'Digitizes legacy paper records',
+      'High accuracy for Arabic and English',
+      'Extracts tables and handwritten notes'
+    ]
+  },
+  'Recommendation Engine': {
+    flow: 'User Activity ➔ Pref Analysis ➔ Collab Filtering ➔ Suggestions',
+    bullets: [
+      'Suggests relevant documents based on role',
+      'Learns from your interaction history',
+      'Highlights trending topics in NCEC'
+    ]
+  },
+  'Workflow Automation': {
+    flow: 'Trigger Event ➔ Condition Eval ➔ Action Execute ➔ Status Update ➔ Notify',
+    bullets: [
+      'Automates standard approval chains',
+      'Reduces bottlenecks in operations',
+      'Integrates with existing NCEC tools'
+    ]
+  },
+  'Admin & Security': {
+    flow: 'User Login ➔ Role Verify ➔ Permission Check ➔ Audit Log ➔ Access',
+    bullets: [
+      'Manages user roles and access levels',
+      'Logs all system activities for compliance',
+      'Monitors system health and security'
+    ]
+  }
+}
+
 function SparkTooltip({ active, payload, label, unit }: {
   active?: boolean
   payload?: Array<{ value: number }>
@@ -48,10 +163,32 @@ function SparkTooltip({ active, payload, label, unit }: {
 }
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
+  const info = PAGE_INFO_MAP[title]
+
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+    <div className="flex flex-wrap items-start justify-between gap-4 mb-6 relative z-[100]">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h1>
+          {info && (
+            <div className="relative group inline-flex items-center">
+              <Info size={18} className="text-slate-400 cursor-help hover:text-emerald-500 transition-colors" />
+              <div className="absolute left-full ml-3 top-[-10px] w-80 p-4 bg-slate-900 text-slate-100 text-sm rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 border border-slate-700 pointer-events-none">
+                <div className="absolute top-[15px] -left-2 w-4 h-4 bg-slate-900 border-l border-b border-slate-700 transform rotate-45"></div>
+                <div className="relative z-10">
+                  <h4 className="font-bold text-emerald-400 mb-2 uppercase tracking-wider text-[10px]">Data Flow Process</h4>
+                  <div className="flex items-center gap-1 text-[11px] text-emerald-200 font-mono bg-emerald-950/30 p-2.5 rounded-lg border border-emerald-900/50 mb-4 leading-relaxed">
+                    {info.flow}
+                  </div>
+                  <h4 className="font-bold text-emerald-400 mb-2 uppercase tracking-wider text-[10px]">Key Operations</h4>
+                  <ul className="list-disc pl-4 space-y-1.5 text-xs text-slate-300">
+                    {info.bullets.map((b, i) => <li key={i}>{b}</li>)}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
         {subtitle && <p className="text-sm text-slate-500 mt-1 max-w-2xl">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}

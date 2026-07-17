@@ -20,12 +20,24 @@
   --font-arabic: "IBM Plex Sans Arabic", "Inter", system-ui, sans-serif;
 }
 
+:root {
+  --chart-grid: #e2e8f0;
+  --chart-axis: #94a3b8;
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-border: #e2e8f0;
+  --chart-tooltip-text: #0f172a;
+}
+
+
+
+
+
 html, body, #root {
   height: 100%;
 }
 
 body {
-  background: #f3f5f9;
+  background: #ffffff;
   color: #1e293b;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -65,3 +77,511 @@ body {
 .typing-dot { animation: typing-dot 1.2s infinite; }
 .typing-dot:nth-child(2) { animation-delay: 0.15s; }
 .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+/* ════════════════════════════════════════════════════════════════════
+   INTERACTIVE MAP — STYLES
+   ════════════════════════════════════════════════════════════════════ */
+
+.map-page-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.map-wrapper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.map-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Loading overlay ── */
+.map-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 20;
+}
+
+.map-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #059669;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Glassmorphism Panels ── */
+.map-panel {
+  position: absolute;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  z-index: 10;
+  background: rgba(11, 19, 36, 0.88) !important;
+  backdrop-filter: blur(16px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
+  border: 1px solid rgba(51, 65, 85, 0.6) !important;
+  border-radius: 16px;
+  padding: 12px 14px !important;
+  box-shadow:
+    0 10px 30px rgba(2, 6, 23, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+  max-height: calc(100% - 220px) !important; /* Shorter height */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(71, 85, 105, 0.5) transparent;
+  transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), right 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s ease, transform 0.3s ease;
+}
+
+.map-panel-left {
+  left: 12px !important;
+  width: 270px !important;
+}
+
+.map-panel-right {
+  right: 12px !important;
+  width: 270px !important;
+}
+
+/* Adjust map panels to only shift dynamically when parent dock is expanded (has .w-64 class) on screens >= 1024px */
+@media (min-width: 1024px) {
+  /* LTR: left map panel sits at 104px (next to collapsed dock) and shifts to 264px when parent sidebar is expanded */
+  .map-panel-left {
+    left: 104px !important; /* 96px collapsed sidebar width + 8px gap */
+  }
+  aside.w-64 ~ div .map-panel-left {
+    left: 264px !important; /* 256px expanded sidebar width + 8px gap */
+  }
+
+  /* RTL: left map panel is free on the left side and stays at 12px even when expanded.
+     It is constrained to top: 250px and bottom: 220px to avoid overlapping mirrored widgets. */
+  [dir="rtl"] .map-panel-left {
+    left: 12px !important;
+    top: 250px !important;
+    bottom: 220px !important;
+    transform: none !important;
+    max-height: none !important;
+  }
+  [dir="rtl"] aside.w-64 ~ div .map-panel-left {
+    left: 12px !important;
+  }
+
+  /* LTR: right map panel needs to fit between the top title card and the bottom coordinates widget */
+  .map-panel-right {
+    top: 250px !important;
+    bottom: 220px !important;
+    transform: none !important;
+    max-height: none !important;
+  }
+
+  /* RTL: right map panel sits at 104px (next to collapsed dock) and shifts to 264px when parent sidebar is expanded */
+  [dir="rtl"] .map-panel-right {
+    right: 104px !important;
+    left: auto !important;
+  }
+  [dir="rtl"] aside.w-64 ~ div .map-panel-right {
+    right: 264px !important; /* 256px expanded sidebar width + 8px gap */
+    left: auto !important;
+  }
+}
+
+/* Force the floating map title card to the right side of the screen in LTR */
+.map-wrapper > div.absolute.top-28 {
+  left: auto !important;
+  right: 24px !important;
+}
+
+/* In RTL, move the title card to the left side to avoid overlapping the parent sidebar on the right */
+[dir="rtl"] .map-wrapper > div.absolute.top-28 {
+  right: auto !important;
+  left: 24px !important;
+}
+
+/* Force the coordinates widget to the right side of the screen in LTR, shifted left of the map-fab button */
+.map-wrapper > div.absolute.bottom-16 {
+  left: auto !important;
+  right: 76px !important;
+}
+
+/* In RTL, move the coordinates widget to the left side to avoid overlapping the parent sidebar and map-fab button on the right */
+[dir="rtl"] .map-wrapper > div.absolute.bottom-16 {
+  right: auto !important;
+  left: 24px !important;
+}
+
+
+/* ── City navigation bar (bottom) ── */
+.map-cities-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: rgba(11, 19, 36, 0.88) !important;
+  backdrop-filter: blur(16px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
+  border: 1px solid rgba(51, 65, 85, 0.6) !important;
+  border-radius: 24px;
+  padding: 4px 8px;
+  box-shadow:
+    0 10px 30px rgba(2, 6, 23, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+  max-width: calc(100% - 24px);
+}
+
+/* ── Form elements inside Dark Glassmorphic panels ── */
+.map-panel select {
+  background-color: #1e293b !important;
+  border: 1px solid #475569 !important;
+  color: #f8fafc !important;
+  border-radius: 8px !important;
+  padding: 6px 12px !important;
+  outline: none !important;
+  font-size: 12px !important;
+  width: 100% !important;
+  cursor: pointer !important;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.map-panel select:hover {
+  border-color: #10b981 !important;
+}
+
+.map-panel select:focus {
+  border-color: #10b981 !important;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2) !important;
+}
+
+.map-panel select option {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+.map-panel input[type="range"] {
+  background: #334155 !important;
+  border-radius: 4px !important;
+}
+
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* ── Floating Action Button ── */
+.map-fab {
+  position: absolute;
+  bottom: 70px;
+  right: 12px;
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #059669, #10b981);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 16px rgba(5, 150, 105, 0.4);
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.map-fab:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 24px rgba(5, 150, 105, 0.5);
+}
+
+/* ── NCEC Office Markers ── */
+.ncec-office-marker {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.ncec-marker-pulse {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: rgba(5, 150, 105, 0.25);
+  animation: marker-pulse 2s ease-out infinite;
+}
+
+@keyframes marker-pulse {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+.ncec-marker-core {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #059669, #10b981);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid white;
+  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.4);
+  z-index: 1;
+  transition: transform 0.2s;
+}
+
+.ncec-marker-core.hq {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(135deg, #047857, #059669);
+  border: 3px solid #fbbf24;
+  box-shadow: 0 2px 12px rgba(5, 150, 105, 0.5), 0 0 0 3px rgba(251, 191, 36, 0.3);
+}
+
+.ncec-office-marker:hover .ncec-marker-core {
+  transform: scale(1.15);
+}
+
+/* ── Monitoring Station Markers ── */
+.monitoring-marker {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.monitoring-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid;
+  opacity: 0.4;
+  animation: monitoring-ring-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes monitoring-ring-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(1.4); opacity: 0; }
+}
+
+.monitoring-core {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  z-index: 1;
+  transition: transform 0.2s;
+}
+
+.monitoring-marker:hover .monitoring-core {
+  transform: scale(1.2);
+}
+
+/* ── EIA Project Markers ── */
+.eia-marker {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.eia-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 8px;
+  opacity: 0.3;
+  animation: eia-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes eia-pulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.3; }
+  50% { transform: scale(1.5); opacity: 0; }
+}
+
+.eia-core {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 1;
+  transition: transform 0.2s;
+}
+
+.eia-marker:hover .eia-core {
+  transform: scale(1.15);
+}
+
+/* ── Mapbox Popup Styling ── */
+.ncec-popup .mapboxgl-popup-content {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.5);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.12);
+}
+
+.ncec-popup .mapboxgl-popup-tip {
+  border-top-color: rgba(255, 255, 255, 0.95);
+}
+
+.ncec-popup .mapboxgl-popup-close-button {
+  font-size: 18px;
+  color: #94a3b8;
+  right: 8px;
+  top: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+
+.ncec-popup .mapboxgl-popup-close-button:hover {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+/* ── Override Mapbox controls ── */
+.mapboxgl-ctrl-group {
+  border-radius: 12px !important;
+  border: 1px solid rgba(226, 232, 240, 0.5) !important;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.06) !important;
+  overflow: hidden;
+}
+
+.mapboxgl-ctrl-group button {
+  width: 36px !important;
+  height: 36px !important;
+}
+
+.mapboxgl-ctrl-scale {
+  border-radius: 6px !important;
+  background: rgba(248, 250, 252, 0.85) !important;
+  backdrop-filter: blur(8px) !important;
+  border-color: rgba(226, 232, 240, 0.5) !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  padding: 2px 6px !important;
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+  .map-panel-right { display: none !important; }
+  .map-panel-left { width: 190px !important; }
+}
+
+@media (max-width: 640px) {
+  .map-panel-left { display: none !important; }
+  .map-page-container { height: 100%; }
+}
+
+/* ── Cesium Overrides & Cleanups ── */
+.cesium-viewer-bottom {
+  display: none !important;
+}
+
+.map-panel::-webkit-scrollbar {
+  width: 4px;
+}
+
+.map-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.map-panel::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 2px;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ── Professional Color & Glassmorphism Refinements ── */
+
+/* Floating Title Card glassmorphic match */
+.map-wrapper > div.absolute.top-28 {
+  background: rgba(11, 19, 36, 0.88) !important;
+  backdrop-filter: blur(16px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
+  border: 1px solid rgba(51, 65, 85, 0.6) !important;
+}
+
+/* Coordinates & Altitude widget glassmorphic match */
+.map-wrapper > div.absolute.bottom-16 {
+  background: rgba(11, 19, 36, 0.88) !important;
+  backdrop-filter: blur(16px) saturate(1.8) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
+  border: 1px solid rgba(51, 65, 85, 0.6) !important;
+}
+
+/* Air Quality Overview blocks (Replacing harsh raw templates with professional dark mode tints) */
+.map-panel-right .bg-emerald-950\/30 {
+  background: rgba(16, 185, 129, 0.08) !important;
+  border-color: rgba(16, 185, 129, 0.25) !important;
+  color: #6ee7b7 !important;
+}
+
+.map-panel-right .bg-amber-950\/30 {
+  background: rgba(245, 158, 11, 0.08) !important;
+  border-color: rgba(245, 158, 11, 0.25) !important;
+  color: #fde68a !important;
+}
+
+.map-panel-right .bg-red-950\/30 {
+  background: rgba(239, 68, 68, 0.08) !important;
+  border-color: rgba(239, 68, 68, 0.25) !important;
+  color: #fca5a5 !important;
+}
+
+/* National Indicators boxes */
+.map-panel-right .bg-slate-950\/30 {
+  background: rgba(15, 23, 42, 0.45) !important;
+  border-color: rgba(51, 65, 85, 0.4) !important;
+}
+
+/* Left Sidebar layer toggles (Active active status) */
+.map-panel-left .bg-emerald-950\/40 {
+  background: rgba(16, 185, 129, 0.12) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #34d399 !important;
+}
+
+/* Map page dropdown select elements */
+.map-panel select {
+  background-color: rgba(15, 23, 42, 0.65) !important;
+  border: 1px solid rgba(71, 85, 105, 0.5) !important;
+}
+
+

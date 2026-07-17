@@ -2,17 +2,20 @@ import { NavLink, Navigate, Outlet, useLocation, useNavigate } from 'react-route
 import {
   LayoutDashboard, Database, MessageSquareText, Leaf, Scale, Gavel,
   FilePlus2, FileSearch, Sparkles, BarChart3, Search, ScanText,
-  GitBranch, ShieldCheck, Globe, Bell, Cpu, Lock, Menu, X, UserCog, LogOut,
+  GitBranch, ShieldCheck, Globe, Lock, Menu, X, UserCog, LogOut, MapPin,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useLang } from '../i18n'
 import { useRole, ROLES } from '../roles'
 import { Button } from './ui'
 
+import logo from '../assets/logo.png'
+import logoAr from '../assets/logo-ar.png'
+
 const navGroups = [
   {
     label: 'overview',
-    items: [{ to: '/', icon: LayoutDashboard, key: 'dashboard' }],
+    items: [{ to: '/dashboard', icon: LayoutDashboard, key: 'dashboard' }],
   },
   {
     label: 'aiWorkspace',
@@ -39,6 +42,7 @@ const navGroups = [
     items: [
       { to: '/recommendations', icon: Sparkles, key: 'recommendations' },
       { to: '/workflows', icon: GitBranch, key: 'workflows' },
+      { to: '/', icon: MapPin, key: 'interactiveMap' },
     ],
   },
   {
@@ -48,74 +52,79 @@ const navGroups = [
 ]
 
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { t } = useLang()
+  const { lang, t } = useLang()
   const { role } = useRole()
+  const [hovered, setHovered] = useState(false)
+  const { pathname } = useLocation()
+  const isMapPage = pathname === '/'
   return (
     <>
       {open && <div className="fixed inset-0 bg-slate-900/30 z-30 lg:hidden" onClick={onClose} />}
       <aside
-        className={`fixed lg:static inset-y-0 start-0 z-40 w-64 shrink-0 bg-white border-e border-slate-200 flex flex-col transition-transform duration-200 ${
+        className={`fixed ${isMapPage ? 'lg:absolute lg:z-30 lg:bg-transparent lg:shadow-none' : 'lg:static'} inset-y-0 start-0 z-40 shrink-0 flex flex-col transition-all duration-300 ease-in-out ${
+          hovered ? 'w-64' : 'w-24'
+        } ${
           open ? 'translate-x-0' : '-translate-x-full rtl:translate-x-full'
-        } lg:translate-x-0`}
+        } lg:translate-x-0 lg:rtl:translate-x-0`}
       >
-        <div className="flex items-center gap-3 px-4 h-16 border-b border-slate-200">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-[0_2px_10px_rgba(16,185,129,0.35)]">
-            <Leaf size={18} className="text-white" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-slate-900 leading-tight truncate">{t('appName')}</p>
-            <p className="text-[10px] text-slate-500 truncate">{t('appSub')}</p>
-          </div>
-          <button className="ms-auto lg:hidden text-slate-500" onClick={onClose}><X size={18} /></button>
+        <button className="absolute end-4 top-4 lg:hidden text-slate-500 z-50" onClick={onClose}>
+          <X size={18} />
+        </button>
+        <div className={`flex items-center justify-start ps-10 w-56 h-24 relative shrink-0 ${isMapPage ? 'border-b border-transparent bg-transparent' : 'border-b border-slate-200'}`}>
+          <img src={lang === 'ar' ? logoAr : logo} alt="Logo" className="h-20 w-auto object-contain" />
         </div>
-
-        <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-4">
-          {navGroups.map((group) => {
-            const items = group.items.filter((i) => role.modules.includes(i.to))
-            if (items.length === 0) return null
-            return (
-              <div key={group.label}>
-                <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">{t(group.label)}</p>
-                <div className="space-y-0.5">
-                  {items.map((item) => (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      end={item.to === '/'}
-                      onClick={onClose}
-                      className={({ isActive }) =>
-                        `flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors ${
-                          isActive
-                            ? 'bg-brand-600/10 text-brand-700 border border-brand-600/30'
-                            : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-transparent'
-                        }`
-                      }
-                    >
-                      <item.icon size={16} className="shrink-0" />
-                      <span className="truncate">{t(item.key)}</span>
-                    </NavLink>
-                  ))}
+        <div className="flex-1 flex flex-col justify-center items-start">
+          <nav
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            className={`overflow-y-auto m-3 ms-5 p-3.5 space-y-4 bg-white/80 backdrop-blur-md border border-slate-200/60 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] h-fit transition-all duration-300 ease-in-out ${
+              hovered ? 'w-[232px]' : 'w-16'
+            }`}
+          >
+            {navGroups.map((group) => {
+              const items = group.items.filter((i) => role.modules.includes(i.to))
+              if (items.length === 0) return null
+              return (
+                <div key={group.label} className="space-y-1">
+                  <p
+                    className={`px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 whitespace-nowrap transition-all duration-300 ${
+                      hovered ? 'opacity-100 max-h-10' : 'opacity-0 max-h-0 overflow-hidden mb-0'
+                    }`}
+                  >
+                    {t(group.label)}
+                  </p>
+                  <div className="space-y-0.5">
+                    {items.map((item) => (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        end={item.to === '/'}
+                        onClick={onClose}
+                        className={({ isActive }) =>
+                          `flex items-center rounded-lg text-[13px] font-medium transition-all duration-300 ${
+                            hovered ? 'px-2.5 justify-start gap-2.5 w-full h-9' : 'w-9 h-9 justify-center'
+                          } ${
+                            isActive
+                              ? 'bg-brand-600/10 text-brand-700 border border-brand-600/30'
+                              : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-transparent'
+                          }`
+                        }
+                      >
+                        <item.icon size={16} className="shrink-0" />
+                        <span
+                          className={`truncate transition-all duration-300 ${
+                            hovered ? 'opacity-100 max-w-[200px] ms-0' : 'opacity-0 max-w-0 overflow-hidden pointer-events-none'
+                          }`}
+                        >
+                          {t(item.key)}
+                        </span>
+                      </NavLink>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-        </nav>
-
-        <div className="p-3 border-t border-slate-200">
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-            <div className="flex items-center gap-2 text-xs text-slate-700">
-              <Lock size={13} className="text-brand-600" />
-              <span className="font-semibold">{t('onPremise')}</span>
-            </div>
-            <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
-              <Cpu size={12} />
-              <span>{t('localLLM')}</span>
-              <span className="ms-auto flex items-center gap-1 text-emerald-600">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 glow-dot animate-pulse-soft" />
-                Online
-              </span>
-            </div>
-          </div>
+              )
+            })}
+          </nav>
         </div>
       </aside>
     </>
@@ -127,32 +136,30 @@ function Header({ onMenu }: { onMenu: () => void }) {
   const { role, setRoleId, user, logout } = useRole()
   const navigate = useNavigate()
   const isAr = lang === 'ar'
+  const { pathname } = useLocation()
+  const isMapPage = pathname === '/'
   return (
-    <header className="h-16 shrink-0 border-b border-slate-200 bg-white/85 backdrop-blur flex items-center gap-3 px-4 lg:px-6 sticky top-0 z-20">
-      <button className="lg:hidden text-slate-600" onClick={onMenu}><Menu size={20} /></button>
-      <div className="hidden md:flex items-center gap-2 flex-1 max-w-md">
-        <div className="relative w-full">
-          <Search size={15} className="absolute start-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            className="w-full bg-slate-50 border border-slate-200 rounded-lg ps-9 pe-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-brand-600/60 focus:bg-white"
-            placeholder={t('searchPlaceholder')}
-          />
-        </div>
-      </div>
+    <header className={`h-24 shrink-0 flex items-center gap-3 px-4 lg:px-6 z-20 transition-all duration-300 ${
+      isMapPage
+        ? 'absolute top-0 start-0 end-0 bg-transparent border-b-0'
+        : 'border-b border-slate-200 bg-white/85 backdrop-blur sticky top-0'
+    }`}>
+      <button className={`lg:hidden ${isMapPage ? 'text-white' : 'text-slate-600'}`} onClick={onMenu}><Menu size={20} /></button>
       <div className="ms-auto flex items-center gap-2 lg:gap-3">
-        <span className="hidden xl:flex items-center gap-1.5 text-xs text-slate-500">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 glow-dot animate-pulse-soft" />
-          {t('systemHealthy')}
-        </span>
-
         {/* Live role switcher — demonstrates working RBAC */}
-        <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg ps-2.5 pe-1.5 py-1">
+        <div className={`flex items-center gap-1.5 border rounded-lg ps-2.5 pe-1.5 py-1 transition-all ${
+          isMapPage
+            ? 'bg-slate-900/90 border-slate-700/50 text-slate-200 shadow-2xl backdrop-blur-md'
+            : 'bg-slate-50 border-slate-200 text-slate-700'
+        }`}>
           <UserCog size={14} className="text-brand-600 shrink-0" />
           <span className="hidden sm:block text-[10px] text-slate-400 whitespace-nowrap">{t('viewAs')}</span>
           <select
             value={role.id}
             onChange={(e) => setRoleId(e.target.value)}
-            className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer py-1 max-w-[150px]"
+            className={`bg-transparent text-xs font-semibold focus:outline-none cursor-pointer py-1 max-w-[150px] ${
+              isMapPage ? 'text-white [&>option]:bg-slate-900 [&>option]:text-white' : 'text-slate-700'
+            }`}
           >
             {ROLES.map((r) => (
               <option key={r.id} value={r.id}>{r.id} — {isAr ? r.nameAr : r.name}</option>
@@ -162,26 +169,30 @@ function Header({ onMenu }: { onMenu: () => void }) {
 
         <button
           onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
-          className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-2 cursor-pointer transition-colors hover:border-brand-600/60"
+          className={`flex items-center gap-1.5 text-xs font-semibold border rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+            isMapPage
+              ? 'bg-slate-900/90 border-slate-700/50 text-slate-200 hover:text-white hover:border-brand-500/60 shadow-2xl backdrop-blur-md'
+              : 'text-slate-600 hover:text-slate-900 bg-white border-slate-300 hover:border-brand-600/60'
+          }`}
         >
           <Globe size={14} />
           {lang === 'en' ? 'العربية' : 'English'}
         </button>
-        <button className="relative text-slate-500 hover:text-slate-800 p-2 rounded-lg hover:bg-slate-100 transition-colors">
-          <Bell size={17} />
-          <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-rose-500 glow-dot" />
-        </button>
         <div className="hidden md:flex items-center gap-2 ps-2 pe-1 py-1 rounded-lg">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-500 to-violet-600 flex items-center justify-center text-xs font-bold text-white">{user?.initials ?? 'U'}</div>
           <div className="hidden lg:block text-start">
-            <p className="text-xs font-semibold text-slate-900 leading-tight">{user?.name}</p>
-            <p className="text-[10px] text-slate-500">{role.id} · {isAr ? role.nameAr : role.name}</p>
+            <p className={`text-xs font-semibold leading-tight ${isMapPage ? 'text-white' : 'text-slate-900'}`}>{user?.name}</p>
+            <p className={`text-[10px] ${isMapPage ? 'text-slate-400' : 'text-slate-500'}`}>{role.id} · {isAr ? role.nameAr : role.name}</p>
           </div>
         </div>
         <button
           title={t('signOut')}
           onClick={() => { logout(); navigate('/login', { replace: true }) }}
-          className="text-slate-500 hover:text-rose-600 p-2 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+          className={`p-2 rounded-lg transition-colors cursor-pointer ${
+            isMapPage
+              ? 'text-slate-400 hover:text-rose-400 hover:bg-slate-800/40'
+              : 'text-slate-500 hover:text-rose-600 hover:bg-rose-50'
+          }`}
         >
           <LogOut size={16} />
         </button>
@@ -222,12 +233,17 @@ export default function Layout() {
   const { pathname } = useLocation()
   const allowed = role.modules.includes(pathname)
   if (!user) return <Navigate to="/login" replace />
+  const isMapPage = pathname === '/'
   return (
-    <div className="flex h-full">
+    <div className="flex h-full relative overflow-hidden">
       <Sidebar open={open} onClose={() => setOpen(false)} />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 h-full relative">
         <Header onMenu={() => setOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.06),transparent_55%)]">
+        <main className={`flex-1 ${
+          isMapPage
+            ? 'p-0 bg-transparent overflow-hidden h-full relative w-full'
+            : 'overflow-y-auto p-4 lg:p-6 bg-white'
+        }`}>
           {allowed ? <Outlet /> : <AccessGate />}
         </main>
       </div>
