@@ -1251,7 +1251,7 @@ Legacy Lab Data Appendices - Page ${page}
               {/* Left Column: Visual Source */}
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-slate-700">{isAr ? 'المستند الأصلي المعاين:' : 'Visual Source Preview:'}</p>
-                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 min-h-[300px] relative overflow-hidden flex flex-col justify-center">
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 h-[550px] relative overflow-hidden flex flex-col justify-center">
                   {renderJobScan(previewJob)}
                 </div>
               </div>
@@ -1319,7 +1319,7 @@ Legacy Lab Data Appendices - Page ${page}
                   </div>
                 )}
 
-                <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 min-h-[300px] flex flex-col justify-between overflow-x-auto">
+                <div className="rounded-xl bg-slate-900 border border-slate-800 p-4 h-[550px] overflow-y-auto overflow-x-auto">
                   <pre 
                     dir={((previewJob ? previewJob.name : '').includes('Inspection') || (previewJob ? previewJob.name : '').includes('Forms')) ? 'ltr' : 'rtl'}
                     className={`text-xs text-slate-300 whitespace-pre-wrap leading-relaxed font-sans ${

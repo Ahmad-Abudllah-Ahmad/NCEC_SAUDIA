@@ -533,7 +533,7 @@ export default function MapPage() {
           image: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="%23059669" stroke="white" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M13 21V3l6 4v14"/></svg>',
           width: isMinimap ? 14 : 28,
           height: isMinimap ? 14 : 28,
-          heightReference: isMinimap ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+          heightReference: Cesium.HeightReference.NONE,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
@@ -558,7 +558,7 @@ export default function MapPage() {
           color: Cesium.Color.fromCssColorString(color),
           outlineColor: Cesium.Color.WHITE,
           outlineWidth: isMinimap ? 1 : 2,
-          heightReference: isMinimap ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+          heightReference: Cesium.HeightReference.NONE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         properties: {
@@ -580,7 +580,7 @@ export default function MapPage() {
             material: Cesium.Color.fromCssColorString(color).withAlpha(0.12),
             outline: true,
             outlineColor: Cesium.Color.fromCssColorString(color).withAlpha(0.4),
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.NONE,
           },
           properties: {
             ...station,
@@ -698,7 +698,7 @@ export default function MapPage() {
           image: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${encodeURIComponent(statusColor)}" stroke="white" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
           width: isMinimap ? 12 : 24,
           height: isMinimap ? 12 : 24,
-          heightReference: isMinimap ? Cesium.HeightReference.NONE : Cesium.HeightReference.CLAMP_TO_GROUND,
+          heightReference: Cesium.HeightReference.NONE,
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
@@ -935,32 +935,51 @@ export default function MapPage() {
     if (newMode) {
       // Switch to 3D Globe
       viewer.scene.morphTo3D(1.5)
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(45.08, 23.89, 2300000.0),
-        orientation: {
-          heading: Cesium.Math.toRadians(0.0),
-          pitch: Cesium.Math.toRadians(-55.0),
-          roll: 0.0,
-        },
-        duration: 1.5,
-      })
+      // Wait for morph to strictly finish, then fly to the default 3D view
+      setTimeout(() => {
+        resetView()
+      }, 1600)
     } else {
       // Switch to 2D Flat Map
       viewer.scene.morphTo2D(1.5)
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(45.08, 23.89, 2300000.0),
-        orientation: {
-          heading: Cesium.Math.toRadians(0.0),
-          pitch: Cesium.Math.toRadians(-90.0),
-          roll: 0.0,
-        },
-        duration: 1.5,
-      })
+      setTimeout(() => {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(45.08, 23.89, 2300000.0),
+          orientation: {
+            heading: Cesium.Math.toRadians(0.0),
+            pitch: Cesium.Math.toRadians(-90.0),
+            roll: 0.0,
+          },
+          duration: 1.5,
+        })
+      }, 1600)
     }
   }, [is3DMode])
 
   /* ────── Region Classifier Based on Hover Coordinates ────── */
-
+  const getRegionName = (coords: { lat: number; lng: number; elevation: number }) => {
+    const { lat, lng, elevation } = coords
+    if (lng < 39.5) {
+      if (elevation < 0) return isAr ? 'صدع البحر الأحمر المائي' : 'Red Sea Rift Zone'
+      return isAr ? 'سهل تهامة الساحلي' : 'Tihama Coastal Plain'
+    }
+    if (lng >= 39.5 && lng < 43 && lat < 23) {
+      return isAr ? 'مرتفعات السروات الجبلية' : 'Sarawat Mountain Range'
+    }
+    if (lng >= 35 && lng < 40 && lat >= 23) {
+      return isAr ? 'سلسلة جبال الحجاز' : 'Hijaz Mountain Range'
+    }
+    if (lng >= 43 && lng < 48 && lat > 18 && lat < 28) {
+      return isAr ? 'هضبة نجد الوسطى' : 'Najd Central Plateau'
+    }
+    if (lng >= 45 && lat <= 19.5) {
+      return isAr ? 'صحراء الربع الخالي' : 'Rub\' al Khali (Empty Quarter)'
+    }
+    if (lng >= 48) {
+      return isAr ? 'المنطقة الساحلية الشرقية' : 'Eastern Coastal Plain'
+    }
+    return isAr ? 'المملكة العربية السعودية' : 'Kingdom of Saudi Arabia'
+  }
 
   // Count stations for dashboard statistics
   const goodStations = monitoringStations.filter(s => s.aqi <= 50).length

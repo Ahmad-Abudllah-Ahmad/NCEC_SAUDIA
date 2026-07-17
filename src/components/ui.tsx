@@ -374,7 +374,7 @@ export function Modal({
 }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-[2px]" onClick={onClose} />
       <div className={`relative w-full ${maxW} bg-white border border-slate-200 rounded-2xl shadow-2xl max-h-[85vh] flex flex-col`}>
         <div className="flex items-start justify-between gap-3 p-5 pb-3 border-b border-slate-100 shrink-0">
