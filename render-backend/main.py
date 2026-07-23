@@ -1,8 +1,7 @@
 """
-NCEC AI Platform — PaddleOCR Backend Server for Render
-=====================================================
-Real-time Arabic & English OCR extraction using PaddleOCR.
-RAG chat via Gemini API (0 MB local weights) + Supabase pgvector.
+NCEC AI Platform — OCR + ultra-light open-weight RAG backend
+============================================================
+PaddleOCR + Vicuna-68M GGUF (~40 MB) via llama-cpp + Supabase.
 """
 
 import os
@@ -21,15 +20,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from rag import RAGError, gemini_embed, gemini_generate, llm_status, run_rag_chat
+from rag import RAGError, run_rag_chat
+from llm_engine import embed_text, engine_status, generate_text, ensure_gguf
 
-# ── PaddleOCR initialisation ────────────────────────────────────────────
+# ── PaddleOCR ───────────────────────────────────────────────────────────
 _ocr_engine = None
 _ocr_lock = threading.Lock()
+jobs: dict[str, dict] = {}
 
 
 def get_ocr():
-    """Singleton PaddleOCR instance with Arabic + English support."""
     global _ocr_engine
     if _ocr_engine is None:
         with _ocr_lock:
@@ -39,12 +39,7 @@ def get_ocr():
     return _ocr_engine
 
 
-# ── In-memory job store ─────────────────────────────────────────────────
-jobs: dict[str, dict] = {}
-
-
-# ── FastAPI app ─────────────────────────────────────────────────────────
-app = FastAPI(title="NCEC OCR API (Render)", version="1.0.0")
+app = FastAPI(title="NCEC OCR API (Render)", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,9 +50,15 @@ app.add_middleware(
 )
 
 
-# ── Helpers ─────────────────────────────────────────────────────────────
+@app.on_event("startup")
+def _warmup_model():
+    try:
+        ensure_gguf()
+    except Exception as e:
+        print(f"Model warmup warning: {e}")
+
+
 def pdf_page_to_image(doc: fitz.Document, page_index: int, dpi: int = 300) -> np.ndarray:
-    """Render a single PDF page to a NumPy RGB array at the given DPI."""
     page = doc[page_index]
     mat = fitz.Matrix(dpi / 72, dpi / 72)
     pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -66,27 +67,23 @@ def pdf_page_to_image(doc: fitz.Document, page_index: int, dpi: int = 300) -> np
 
 
 def ocr_image(img_array: np.ndarray) -> str:
-    """Run PaddleOCR on a NumPy image array and return extracted text."""
     ocr = get_ocr()
     results = ocr.predict(img_array)
     lines = []
     for res in results:
-        texts = res.get('rec_texts', [])
-        for text in texts:
+        for text in res.get("rec_texts", []):
             if text and text.strip():
                 lines.append(text.strip())
     return "\n".join(lines)
 
 
 def process_job_sync(job_id: str, file_path: str, file_type: str):
-    """Background worker: OCR each page and update job store in real time."""
     job = jobs[job_id]
     try:
         if file_type in ("image/png", "image/jpeg", "image/jpg", "image/tiff"):
             job["total_pages"] = 1
             img = Image.open(file_path).convert("RGB")
-            img_array = np.array(img)
-            text = ocr_image(img_array)
+            text = ocr_image(np.array(img))
             job["pages"][1] = text
             job["processed"] = 1
             job["status"] = "completed"
@@ -95,23 +92,18 @@ def process_job_sync(job_id: str, file_path: str, file_type: str):
             doc = fitz.open(file_path)
             total = len(doc)
             job["total_pages"] = total
-
             for i in range(total):
-                img_array = pdf_page_to_image(doc, i)
-                text = ocr_image(img_array)
+                text = ocr_image(pdf_page_to_image(doc, i))
                 page_num = i + 1
                 job["pages"][page_num] = text
                 job["processed"] = page_num
                 job["pct"] = round((page_num / total) * 100, 1)
-
             doc.close()
             job["status"] = "completed"
             job["pct"] = 100
-
     except Exception as exc:
         job["status"] = "failed"
         job["error"] = str(exc)
-        print(f"Error in OCR job {job_id}:")
         traceback.print_exc()
     finally:
         try:
@@ -120,7 +112,6 @@ def process_job_sync(job_id: str, file_path: str, file_type: str):
             pass
 
 
-# ── OCR Routes ──────────────────────────────────────────────────────────
 @app.get("/")
 @app.get("/api/health")
 async def health():
@@ -129,8 +120,8 @@ async def health():
         "service": "NCEC OCR Backend",
         "engine": "PaddleOCR",
         "lang": "ar",
-        "rag": "Gemini API + Supabase pgvector",
-        "llm": llm_status(),
+        "rag": "Vicuna-68M + Supabase",
+        "llm": engine_status(),
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
     }
 
@@ -142,8 +133,7 @@ async def upload_and_start_ocr(file: UploadFile = File(...)):
 
     suffix = Path(file.filename).suffix
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    content = await file.read()
-    tmp.write(content)
+    tmp.write(await file.read())
     tmp.close()
 
     total_pages = 1
@@ -167,19 +157,8 @@ async def upload_and_start_ocr(file: UploadFile = File(...)):
         "pages": {},
         "error": None,
     }
-
-    thread = threading.Thread(
-        target=process_job_sync,
-        args=(job_id, tmp.name, file_type),
-        daemon=True,
-    )
-    thread.start()
-
-    return JSONResponse({
-        "job_id": job_id,
-        "total_pages": total_pages,
-        "status": "processing",
-    })
+    threading.Thread(target=process_job_sync, args=(job_id, tmp.name, file_type), daemon=True).start()
+    return JSONResponse({"job_id": job_id, "total_pages": total_pages, "status": "processing"})
 
 
 @app.get("/api/ocr/status/{job_id}")
@@ -187,7 +166,6 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-
     response = {
         "id": job["id"],
         "filename": job["filename"],
@@ -197,46 +175,43 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
         "status": job["status"],
         "error": job["error"],
     }
-
     if page is not None:
-        response["page_text"] = job["pages"].get(page, None)
+        response["page_text"] = job["pages"].get(page)
     else:
         response["pages"] = job["pages"]
-
     return JSONResponse(response)
 
 
-# ── LLM + RAG Routes ───────────────────────────────────────────────────
 class LLMGenerateRequest(BaseModel):
-    model: str = "gemini-2.0-flash-lite"
+    model: str = "vicuna-68m"
     prompt: str
     system: Optional[str] = None
     stream: bool = False
 
 
 class LLMEmbeddingRequest(BaseModel):
-    model: str = "text-embedding-004"
+    model: str = "light-768"
     prompt: str
 
 
 class RAGChatRequest(BaseModel):
     question: str
     mode: str = "document"
-    match_threshold: float = 0.15
+    match_threshold: float = 0.0
     match_count: int = 5
 
 
 @app.post("/api/rag/chat")
 async def rag_chat(req: RAGChatRequest):
-    """Full RAG: Gemini embed → Supabase pgvector → Gemini generate (context-only)."""
     try:
-        result = run_rag_chat(
-            question=req.question,
-            mode=req.mode,
-            match_threshold=req.match_threshold,
-            match_count=req.match_count,
+        return JSONResponse(
+            run_rag_chat(
+                question=req.question,
+                mode=req.mode,
+                match_threshold=req.match_threshold,
+                match_count=req.match_count,
+            )
         )
-        return JSONResponse(result)
     except RAGError as e:
         raise HTTPException(503, str(e))
     except Exception as e:
@@ -244,21 +219,19 @@ async def rag_chat(req: RAGChatRequest):
 
 
 @app.post("/api/llm/generate")
-async def proxy_llm_generate(req: LLMGenerateRequest):
+async def llm_generate(req: LLMGenerateRequest):
     try:
-        text = gemini_generate(req.prompt, req.system or "", model=req.model or "gemini-2.0-flash-lite")
-        return JSONResponse({"response": text})
-    except RAGError as e:
-        raise HTTPException(503, str(e))
+        return JSONResponse({"response": generate_text(req.prompt, req.system or ""), "model": "vicuna-68m"})
+    except Exception as e:
+        raise HTTPException(503, f"Tiny LLM error: {e}")
 
 
 @app.post("/api/llm/embeddings")
-async def proxy_llm_embeddings(req: LLMEmbeddingRequest):
+async def llm_embeddings(req: LLMEmbeddingRequest):
     try:
-        embedding = gemini_embed(req.prompt)
-        return JSONResponse({"embedding": embedding})
-    except RAGError as e:
-        raise HTTPException(503, str(e))
+        return JSONResponse({"embedding": embed_text(req.prompt)})
+    except Exception as e:
+        raise HTTPException(503, f"Embedding error: {e}")
 
 
 if __name__ == "__main__":

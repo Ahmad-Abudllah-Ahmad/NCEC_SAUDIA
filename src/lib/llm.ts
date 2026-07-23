@@ -123,7 +123,7 @@ async function callGenerate(
 export async function generateResponse(
   prompt: string,
   context: string,
-  model = 'gemini-2.0-flash-lite',
+  model = 'vicuna-68m',
   onChunk?: (text: string) => void,
 ): Promise<string> {
   const systemPrompt = `You are a professional environmental AI assistant for the Saudi National Center for Environmental Compliance (NCEC).
@@ -135,7 +135,7 @@ Respond in the same language as the user's question.`
   return callGenerate(fullPrompt, systemPrompt, model, onChunk)
 }
 
-export async function generateEmbedding(text: string, model = 'text-embedding-004'): Promise<number[]> {
+export async function generateEmbedding(text: string, model = 'light-768'): Promise<number[]> {
   const endpoints = getEndpoints()
   const response = await fetch(endpoints.embeddings, {
     method: 'POST',
@@ -150,7 +150,7 @@ export async function generateEmbedding(text: string, model = 'text-embedding-00
 
   const data = await response.json()
   if (!data?.embedding?.length) {
-    throw new Error('Embedding API returned no vector — ensure GEMINI_API_KEY is set on the Render backend')
+    throw new Error('Embedding API returned no vector — ensure the Render backend /api/llm/embeddings is available')
   }
   return data.embedding
 }
@@ -158,7 +158,7 @@ export async function generateEmbedding(text: string, model = 'text-embedding-00
 export async function generateLegalResponse(
   prompt: string,
   context: string,
-  model = 'gemini-2.0-flash-lite',
+  model = 'vicuna-68m',
   onChunk?: (text: string) => void,
 ): Promise<string> {
   const systemPrompt = `You are a specialized Executive AI Legal & Policy Assistant for NCEC staff.
@@ -171,7 +171,7 @@ Respond in the same language as the user's question.`
   return callGenerate(fullPrompt, systemPrompt, model, onChunk)
 }
 
-export async function translateText(text: string, targetLang: 'ar' | 'en', model = 'gemini-2.0-flash-lite'): Promise<string> {
+export async function translateText(text: string, targetLang: 'ar' | 'en', model = 'vicuna-68m'): Promise<string> {
   const prompt = targetLang === 'ar'
     ? `Translate the following text accurately into Arabic. Preserve markdown structure. Return ONLY the translation:\n\n${text}`
     : `Translate the following text accurately into English. Preserve markdown structure. Return ONLY the translation:\n\n${text}`

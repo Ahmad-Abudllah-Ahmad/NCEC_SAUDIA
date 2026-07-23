@@ -6,3 +6,4 @@ python-multipart
 PyMuPDF
 Pillow
 numpy
+llama-cpp-python

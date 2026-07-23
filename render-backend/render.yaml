@@ -12,11 +12,9 @@ services:
       - key: PORT
         value: 8100
       - key: CHAT_MODEL
-        value: gemini-2.0-flash-lite
-      - key: EMBED_MODEL
-        value: text-embedding-004
-      - key: GEMINI_API_KEY
-        sync: false
+        value: vicuna-68m
+      - key: MODEL_DIR
+        value: /app/models
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
