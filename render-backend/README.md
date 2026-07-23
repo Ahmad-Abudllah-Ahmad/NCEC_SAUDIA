@@ -1,20 +1,19 @@
 # NCEC Render Backend
 
-Production FastAPI: **PaddleOCR** + **grounded RAG** over Supabase.
+Production FastAPI service: **PaddleOCR** + **Groq Llama 3.1 8B Instant** (open-weight) + **Supabase pgvector**.
 
-- **Default answers:** extractive (quotes real retrieved passages — no tiny LLM hallucinations)
-- **Optional:** set `GEMINI_API_KEY` for Gemini Flash Lite generation + embeddings (0 MB local weights)
-- **Retrieval:** keyword search on `document_chunks` first, then vector match
+No Ollama and no local GGUF. Chat runs on Groq’s API. Embeddings use a light 768-d vector plus keyword/phrase search (Article numbers, etc.).
 
-## Env vars
+## Env vars (Render)
 
-| Key | Required | Notes |
-|-----|----------|-------|
-| `SUPABASE_URL` | yes | Project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | yes | Service role |
-| `GEMINI_API_KEY` | optional | Improves fluency; get free key at https://aistudio.google.com/apikey |
-| `PORT` | no | Default `8100` |
+| Key | Example |
+|-----|---------|
+| `PORT` | `8100` |
+| `CHAT_MODEL` | `llama-3.1-8b-instant` |
+| `GROQ_API_KEY` | your Groq key |
+| `SUPABASE_URL` | your project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role key |
 
 ## Health
 
-`GET /api/health` → OCR + RAG engine status.
+`GET /api/health` returns OCR + Groq engine status.

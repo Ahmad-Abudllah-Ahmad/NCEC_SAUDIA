@@ -83,7 +83,7 @@ export async function askRAG(
 
   const citations = buildCitations(chunks)
   const generate = mode === 'legal' ? generateLegalResponse : generateResponse
-  const answer = await generate(question, context, 'extractive', onChunk)
+  const answer = await generate(question, context, 'llama-3.1-8b-instant', onChunk)
 
   return { answer, citations }
 }

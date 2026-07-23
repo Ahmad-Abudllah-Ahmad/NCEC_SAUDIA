@@ -1,4 +1,4 @@
-# NCEC backend — OCR + grounded RAG (no local LLM weights)
+# NCEC backend — OCR + Groq Llama RAG (no local LLM weights)
 FROM python:3.10-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY . .
 RUN chmod +x /app/start.sh
 
-ENV CHAT_MODEL=extractive
+ENV CHAT_MODEL=llama-3.1-8b-instant
 ENV PORT=8100
 
 EXPOSE 8100

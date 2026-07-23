@@ -1,7 +1,7 @@
 """
-NCEC AI Platform — OCR + grounded RAG backend
-=============================================
-PaddleOCR + keyword/vector RAG (extractive, optional Gemini) + Supabase.
+NCEC AI Platform — OCR + Groq Llama RAG backend
+===============================================
+PaddleOCR + Llama 3.1 8B (Groq, open-weight) + Supabase.
 """
 
 import os
@@ -20,7 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from rag import RAGError, embed_text, engine_status, generate_text, run_rag_chat
+from rag import RAGError, run_rag_chat
+from llm_engine import CHAT_MODEL_LABEL, embed_text, engine_status, generate_text
 
 # ── PaddleOCR ───────────────────────────────────────────────────────────
 _ocr_engine = None
@@ -38,7 +39,7 @@ def get_ocr():
     return _ocr_engine
 
 
-app = FastAPI(title="NCEC OCR API (Render)", version="2.1.0")
+app = FastAPI(title="NCEC OCR API (Render)", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -111,8 +112,10 @@ async def health():
         "service": "NCEC OCR Backend",
         "engine": "PaddleOCR",
         "lang": "ar",
-        "rag": engine_status(),
+        "rag": "Groq Llama + Supabase",
+        "llm": engine_status(),
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
+        "groq_configured": bool(os.getenv("GROQ_API_KEY")),
     }
 
 
@@ -173,7 +176,7 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
 
 
 class LLMGenerateRequest(BaseModel):
-    model: str = "extractive"
+    model: str = "llama-3.1-8b-instant"
     prompt: str
     system: Optional[str] = None
     stream: bool = False
@@ -211,10 +214,11 @@ async def rag_chat(req: RAGChatRequest):
 @app.post("/api/llm/generate")
 async def llm_generate(req: LLMGenerateRequest):
     try:
-        text = generate_text(req.prompt, req.system or "")
-        return JSONResponse({"response": text, "model": engine_status().get("chat_model")})
+        return JSONResponse(
+            {"response": generate_text(req.prompt, req.system or ""), "model": CHAT_MODEL_LABEL}
+        )
     except Exception as e:
-        raise HTTPException(503, f"LLM error: {e}")
+        raise HTTPException(503, f"Groq LLM error: {e}")
 
 
 @app.post("/api/llm/embeddings")
