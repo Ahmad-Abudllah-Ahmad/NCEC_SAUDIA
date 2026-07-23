@@ -1,3 +1,21 @@
+const getApiBase = () => {
+  const customLlmUrl = import.meta.env.VITE_LLM_API_URL
+  const backendUrl = import.meta.env.VITE_OCR_API_URL
+  
+  if (customLlmUrl) return customLlmUrl.replace(/\/$/, '')
+  if (backendUrl) return backendUrl.replace(/\/$/, '')
+  return 'http://localhost:11434'
+}
+
+const getEndpoints = () => {
+  const base = getApiBase()
+  const isBackend = !base.includes('11434')
+  return {
+    generate: isBackend ? `${base}/api/llm/generate` : `${base}/api/generate`,
+    embeddings: isBackend ? `${base}/api/llm/embeddings` : `${base}/api/embeddings`,
+  }
+}
+
 export async function generateResponse(prompt: string, context: string, model = 'llama3.2:1b'): Promise<string> {
   const systemPrompt = `You are a professional environmental AI assistant for the Saudi National Center for Environmental Compliance (NCEC). 
 CRITICAL RULE: You MUST answer the user's question accurately based STRICTLY and ONLY on the provided context from the database documents below.
@@ -10,7 +28,8 @@ ${context}
 `;
 
   try {
-    const response = await fetch('http://localhost:11434/api/generate', {
+    const endpoints = getEndpoints()
+    const response = await fetch(endpoints.generate, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -24,20 +43,21 @@ ${context}
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama API error: ${response.statusText}`);
+      throw new Error(`AI API error: ${response.statusText}`);
     }
 
     const data = await response.json();
     return data.response;
   } catch (err) {
     console.error('LLM error:', err);
-    throw new Error('Could not connect to the local model. Please ensure Ollama is installed and running on your machine.');
+    throw new Error('Could not connect to the AI model service. Please ensure the backend server or Ollama is running.');
   }
 }
 
 export async function generateEmbedding(text: string, model = 'nomic-embed-text'): Promise<number[]> {
   try {
-    const response = await fetch('http://localhost:11434/api/embeddings', {
+    const endpoints = getEndpoints()
+    const response = await fetch(endpoints.embeddings, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -49,14 +69,14 @@ export async function generateEmbedding(text: string, model = 'nomic-embed-text'
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama Embedding API error: ${response.statusText}`);
+      throw new Error(`Embedding API error: ${response.statusText}`);
     }
 
     const data = await response.json();
     return data.embedding;
   } catch (err) {
     console.error('Embedding error:', err);
-    throw new Error('Could not generate embedding. Ensure Ollama is running and the "nomic-embed-text" model is pulled.');
+    throw new Error('Could not generate embedding. Ensure the AI backend or Ollama service is running.');
   }
 }
 
@@ -81,7 +101,8 @@ ${context}
 `;
 
   try {
-    const response = await fetch('http://localhost:11434/api/generate', {
+    const endpoints = getEndpoints()
+    const response = await fetch(endpoints.generate, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -95,14 +116,14 @@ ${context}
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama API error: ${response.statusText}`);
+      throw new Error(`AI API error: ${response.statusText}`);
     }
 
     const data = await response.json();
     return data.response;
   } catch (err) {
     console.error('LLM error:', err);
-    throw new Error('Could not connect to the local model. Please ensure Ollama is installed and running on your machine.');
+    throw new Error('Could not connect to the AI model service. Please ensure the AI backend is running.');
   }
 }
 
@@ -112,7 +133,8 @@ export async function translateText(text: string, targetLang: 'ar' | 'en', model
     : `Translate the following text accurately into English. Preserve all markdown structure, bullet points, headers, numbers, and legal/technical terms. Return ONLY the translated text without commentary:\n\n${text}`;
 
   try {
-    const response = await fetch('http://localhost:11434/api/generate', {
+    const endpoints = getEndpoints()
+    const response = await fetch(endpoints.generate, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -125,7 +147,7 @@ export async function translateText(text: string, targetLang: 'ar' | 'en', model
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama Translation API error: ${response.statusText}`);
+      throw new Error(`Translation API error: ${response.statusText}`);
     }
 
     const data = await response.json();
