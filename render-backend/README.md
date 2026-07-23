@@ -1,8 +1,8 @@
 # NCEC AI Platform — Render Backend (OCR + RAG with Ollama weights)
 
-Production FastAPI service: **PaddleOCR** + **Ollama** (`nomic-embed-text`, `llama3.2:1b`) + **Supabase pgvector**.
+Production FastAPI service: **PaddleOCR** + **Ollama** (`nomic-embed-text`, `qwen2:0.5b`) + **Supabase pgvector**.
 
-Ollama runs **inside the Docker container** with model weights baked in at image build time. No ngrok / laptop tunnel is required.
+`qwen2:0.5b` (~352 MB) is used for chat so the service fits Render memory. Embeddings stay on `nomic-embed-text` (768-d) to match the existing pgvector schema.
 
 ---
 
@@ -28,7 +28,7 @@ Set these in **Dashboard → Environment**:
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server only) |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` (default — in-container) |
 | `EMBED_MODEL` | `nomic-embed-text` |
-| `CHAT_MODEL` | `llama3.2:1b` |
+| `CHAT_MODEL` | `qwen2:0.5b` |
 | `PORT` | `8100` |
 
 > **Plan:** use **Standard (2 GB RAM)** or higher. Starter (512 MB) cannot run Ollama + PaddleOCR together.
@@ -58,7 +58,7 @@ Expect:
     "reachable": true,
     "embed_ready": true,
     "chat_ready": true,
-    "models": ["nomic-embed-text:latest", "llama3.2:1b"]
+    "models": ["nomic-embed-text:latest", "qwen2:0.5b"]
   },
   "supabase_configured": true
 }

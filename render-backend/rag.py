@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "llama3.2:1b")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen2:0.5b")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
@@ -80,7 +80,8 @@ def ollama_generate(prompt: str, system: str, model: str = CHAT_MODEL) -> str:
         "stream": False,
         "options": {
             "temperature": 0.1,
-            "num_ctx": 4096,
+            "num_ctx": 2048,
+            "num_predict": 512,
         },
     }
     try:

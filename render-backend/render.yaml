@@ -16,9 +16,9 @@ services:
       - key: EMBED_MODEL
         value: nomic-embed-text
       - key: CHAT_MODEL
-        value: llama3.2:1b
+        value: qwen2:0.5b
       - key: OLLAMA_KEEP_ALIVE
-        value: 5m
+        value: 30s
       - key: OLLAMA_NUM_PARALLEL
         value: "1"
       - key: SUPABASE_URL

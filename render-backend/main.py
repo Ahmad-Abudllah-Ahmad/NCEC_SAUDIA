@@ -210,7 +210,7 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
 
 # ── LLM + RAG Routes ───────────────────────────────────────────────────
 class LLMGenerateRequest(BaseModel):
-    model: str = "llama3.2:1b"
+    model: str = "qwen2:0.5b"
     prompt: str
     system: Optional[str] = None
     stream: bool = False

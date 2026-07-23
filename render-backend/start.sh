@@ -2,7 +2,7 @@
 set -euo pipefail
 
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
-CHAT_MODEL="${CHAT_MODEL:-llama3.2:1b}"
+CHAT_MODEL="${CHAT_MODEL:-qwen2:0.5b}"
 
 echo "═══════════════════════════════════════════"
 echo " NCEC Backend — Ollama + FastAPI"
