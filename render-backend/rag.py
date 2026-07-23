@@ -1,6 +1,6 @@
 """
-Server-side RAG pipeline: Ollama embeddings + Supabase pgvector retrieval + Ollama generation.
-Uses locally pulled Ollama model weights (nomic-embed-text, llama3.2:1b by default).
+Server-side RAG pipeline: Ollama embeddings + Supabase pgvector + Ollama generation.
+Uses model weights served by the in-container Ollama daemon (see start.sh).
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,55 +25,86 @@ class RAGError(Exception):
     pass
 
 
-def _http_json(url: str, payload: dict, timeout: int = 120) -> dict:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+def _http_json(url: str, payload: Optional[dict] = None, timeout: int = 120, method: str = "POST") -> dict:
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def wait_for_ollama(retries: int = 8, delay: float = 1.5) -> None:
+    last_err: Optional[Exception] = None
+    for _ in range(retries):
+        try:
+            _http_json(f"{OLLAMA_HOST}/api/tags", payload=None, timeout=5, method="GET")
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(delay)
+    raise RAGError(
+        f"Ollama is not ready at {OLLAMA_HOST}. "
+        f"Ensure the container start.sh launched `ollama serve` and pulled {EMBED_MODEL} / {CHAT_MODEL}. "
+        f"Last error: {last_err}"
+    )
+
+
 def ollama_embed(text: str) -> list[float]:
+    wait_for_ollama()
     try:
         res = _http_json(
             f"{OLLAMA_HOST}/api/embeddings",
             {"model": EMBED_MODEL, "prompt": text},
-            timeout=60,
+            timeout=90,
         )
         embedding = res.get("embedding")
         if not embedding or not isinstance(embedding, list):
             raise RAGError(f"Ollama returned no embedding (model={EMBED_MODEL})")
         return embedding
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RAGError(f"Embedding failed ({EMBED_MODEL}): {body}") from e
     except urllib.error.URLError as e:
         raise RAGError(
-            f"Cannot reach Ollama at {OLLAMA_HOST}. Pull models: ollama pull {EMBED_MODEL} && ollama pull {CHAT_MODEL}. Error: {e}"
+            f"Cannot reach Ollama at {OLLAMA_HOST} for embeddings. "
+            f"Model weights must be available: ollama pull {EMBED_MODEL}. Error: {e}"
         ) from e
 
 
 def ollama_generate(prompt: str, system: str, model: str = CHAT_MODEL) -> str:
+    wait_for_ollama()
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
         "system": system,
         "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "num_ctx": 4096,
+        },
     }
     try:
-        res = _http_json(f"{OLLAMA_HOST}/api/generate", payload, timeout=180)
+        res = _http_json(f"{OLLAMA_HOST}/api/generate", payload, timeout=240)
         text = (res.get("response") or "").strip()
         if not text:
             raise RAGError("Ollama returned an empty response")
         return text
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RAGError(f"Generation failed ({model}): {body}") from e
     except urllib.error.URLError as e:
-        raise RAGError(f"Cannot reach Ollama at {OLLAMA_HOST}: {e}") from e
+        raise RAGError(
+            f"Cannot reach Ollama at {OLLAMA_HOST} for generation. "
+            f"Pull model weights: ollama pull {model}. Error: {e}"
+        ) from e
 
 
 def supabase_rpc(fn: str, params: dict) -> list[dict]:
     if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RAGError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set on the backend")
+        raise RAGError(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set on the Render backend "
+            "(Dashboard → Environment). Without them, vector retrieval cannot run."
+        )
 
     url = f"{SUPABASE_URL}/rest/v1/rpc/{fn}"
     data = json.dumps(params).encode("utf-8")
@@ -100,27 +132,26 @@ def keyword_search(query: str, limit: int = 5) -> list[dict]:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return []
 
-    # Extract meaningful tokens (Arabic + Latin words, min 3 chars)
     tokens = re.findall(r"[\u0600-\u06FF]{2,}|[a-zA-Z]{3,}", query)
     if not tokens:
         return []
 
     search_term = tokens[0]
-    url = (
-        f"{SUPABASE_URL}/rest/v1/documents"
-        f"?select=name,content"
-        f"&content=ilike.*{urllib.parse.quote(search_term)}*"
-        f"&limit={limit}"
-    )
-    req = urllib.request.Request(
-        url,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-        },
-        method="GET",
-    )
     try:
+        url = (
+            f"{SUPABASE_URL}/rest/v1/documents"
+            f"?select=name,content"
+            f"&content=ilike.*{urllib.parse.quote(search_term)}*"
+            f"&limit={limit}"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
+            method="GET",
+        )
         with urllib.request.urlopen(req, timeout=20) as resp:
             docs = json.loads(resp.read().decode("utf-8"))
             return [
@@ -159,6 +190,30 @@ CRITICAL RULES:
 4. Respond in the same language as the user's question."""
 
 
+def ollama_status() -> dict:
+    """Diagnostic payload for /api/health."""
+    try:
+        tags = _http_json(f"{OLLAMA_HOST}/api/tags", payload=None, timeout=5, method="GET")
+        models = [m.get("name", "") for m in tags.get("models", [])]
+        return {
+            "reachable": True,
+            "host": OLLAMA_HOST,
+            "models": models,
+            "embed_model": EMBED_MODEL,
+            "chat_model": CHAT_MODEL,
+            "embed_ready": any(EMBED_MODEL in m for m in models),
+            "chat_ready": any(CHAT_MODEL in m for m in models),
+        }
+    except Exception as e:
+        return {
+            "reachable": False,
+            "host": OLLAMA_HOST,
+            "error": str(e),
+            "embed_model": EMBED_MODEL,
+            "chat_model": CHAT_MODEL,
+        }
+
+
 def run_rag_chat(
     question: str,
     mode: str = "document",
@@ -176,7 +231,6 @@ def run_rag_chat(
         },
     )
 
-    # Keyword fallback when vector search returns nothing or weak results
     if not chunks or (chunks and chunks[0].get("similarity", 0) < 0.25):
         kw = keyword_search(question, limit=3)
         if kw:
@@ -191,7 +245,7 @@ def run_rag_chat(
             if not re.search(r"[\u0600-\u06FF]", question)
             else "لا تتوفر معلومات كافية في الوثائق المتاحة للإجابة على هذا السؤال."
         )
-        return {"answer": no_info, "citations": [], "chunks_used": 0}
+        return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": CHAT_MODEL}
 
     context = "\n\n---\n\n".join(
         f"Document: {c.get('document_name', 'Unknown')}\nSimilarity: {c.get('similarity', 0):.2f}\nText: {clean_chunk(c.get('chunk_text', ''))}"
@@ -218,4 +272,5 @@ def run_rag_chat(
         "answer": answer,
         "citations": citations,
         "chunks_used": len(chunks),
+        "engine": CHAT_MODEL,
     }

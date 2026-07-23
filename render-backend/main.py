@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from rag import RAGError, run_rag_chat
+from rag import RAGError, ollama_status, run_rag_chat
 
 # ── PaddleOCR initialisation ────────────────────────────────────────────
 _ocr_engine = None
@@ -132,6 +132,8 @@ async def health():
         "engine": "PaddleOCR",
         "lang": "ar",
         "rag": "Ollama + Supabase pgvector",
+        "ollama": ollama_status(),
+        "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
     }
 
 

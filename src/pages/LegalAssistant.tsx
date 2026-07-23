@@ -160,12 +160,17 @@ export default function LegalAssistant() {
         return newS
       })
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const raw = err instanceof Error ? err.message : String(err)
+      let detail = raw
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed?.detail) detail = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail)
+      } catch { /* keep raw */ }
       setSession((s) => [...s, {
         role: 'ai',
         text: isAr
-          ? `تعذر الاتصال بمحرك الذكاء الاصطناعي القانوني. تأكد من تشغيل Ollama (ollama pull llama3.2:1b && ollama pull nomic-embed-text) أو ضبط OLLAMA_HOST على Render.\n\n${msg}`
-          : `Could not reach the legal AI engine. Ensure Ollama is running (ollama pull llama3.2:1b && ollama pull nomic-embed-text) or set OLLAMA_HOST on Render.\n\n${msg}`,
+          ? `تعذر تشغيل المحرك القانوني على الخادم.\n\n${detail}`
+          : `Legal AI engine is unavailable on the server.\n\n${detail}`,
       }])
     } finally {
       setTyping(false)

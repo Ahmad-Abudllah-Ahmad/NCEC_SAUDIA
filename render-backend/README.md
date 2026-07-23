@@ -1,48 +1,81 @@
-# NCEC AI Platform — Render Backend Deployment
+# NCEC AI Platform — Render Backend (OCR + RAG with Ollama weights)
 
-This directory contains the production-ready Python FastAPI + PaddleOCR backend service, pre-configured for **Render** deployment via Docker.
+Production FastAPI service: **PaddleOCR** + **Ollama** (`nomic-embed-text`, `llama3.2:1b`) + **Supabase pgvector**.
 
----
-
-## 📁 Files Included
-
-- **`main.py`**: FastAPI application handling PDF/Image uploads and PaddleOCR text extraction.
-- **`requirements.txt`**: Python dependencies (`paddlepaddle`, `paddleocr`, `fastapi`, `uvicorn`, `PyMuPDF`, etc.).
-- **`Dockerfile`**: Docker container setup with required system libraries (`libgl1-mesa-glx`, `libglib2.0-0`, etc.).
-- **`render.yaml`**: Render Blueprint configuration file for 1-click deployment.
+Ollama runs **inside the Docker container** with model weights baked in at image build time. No ngrok / laptop tunnel is required.
 
 ---
 
-## 🚀 How to Deploy on Render
+## Files
 
-### Option A: Using Render Blueprints (Recommended)
-1. Push your repository to **GitHub**.
-2. Log in to [Render Dashboard](https://dashboard.render.com).
-3. Click **New +** -> **Blueprint**.
-4. Connect your GitHub repository.
-5. Render will automatically detect `render-backend/render.yaml` and create the Web Service!
-
----
-
-### Option B: Manual Web Service Setup
-1. Log in to [Render Dashboard](https://dashboard.render.com).
-2. Click **New +** -> **Web Service**.
-3. Connect your GitHub repository.
-4. Set the following settings:
-   - **Name**: `ncec-ocr-backend`
-   - **Root Directory**: `render-backend`
-   - **Environment**: `Docker`
-   - **Dockerfile Path**: `./Dockerfile`
-   - **Instance Type**: `Starter` (or higher, minimum 1GB RAM recommended for PaddleOCR)
-5. Click **Create Web Service**.
+| File | Role |
+|------|------|
+| `main.py` | FastAPI — OCR, LLM proxy, `/api/rag/chat` |
+| `rag.py` | Embed → vector search → generate from context |
+| `start.sh` | Starts `ollama serve`, verifies models, then FastAPI |
+| `Dockerfile` | Installs Ollama + pulls model weights |
+| `render.yaml` | Render Blueprint |
 
 ---
 
-## 🔗 Connecting Frontend to your Render Backend
+## Render environment variables (required)
 
-Once your Render Web Service is deployed, copy its live URL (e.g. `https://ncec-ocr-backend.onrender.com`).
+Set these in **Dashboard → Environment**:
 
-Set the environment variable in your Vercel frontend:
-```env
-VITE_OCR_API_URL=https://ncec-ocr-backend.onrender.com
+| Key | Value |
+|-----|--------|
+| `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server only) |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` (default — in-container) |
+| `EMBED_MODEL` | `nomic-embed-text` |
+| `CHAT_MODEL` | `llama3.2:1b` |
+| `PORT` | `8100` |
+
+> **Plan:** use **Standard (2 GB RAM)** or higher. Starter (512 MB) cannot run Ollama + PaddleOCR together.
+
+---
+
+## Deploy
+
+1. Push repo to GitHub.
+2. Render → **New Web Service** → Docker.
+3. **Root Directory:** `render-backend`
+4. **Dockerfile Path:** `./Dockerfile`
+5. Set env vars above → Deploy.
+6. First build pulls model weights (~1.5 GB) — expect 10–20 minutes.
+
+### Verify Ollama after deploy
+
+```bash
+curl https://YOUR-SERVICE.onrender.com/api/health
 ```
+
+Expect:
+
+```json
+{
+  "ollama": {
+    "reachable": true,
+    "embed_ready": true,
+    "chat_ready": true,
+    "models": ["nomic-embed-text:latest", "llama3.2:1b"]
+  },
+  "supabase_configured": true
+}
+```
+
+---
+
+## Frontend (Vercel)
+
+```env
+VITE_OCR_API_URL=https://YOUR-SERVICE.onrender.com
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+---
+
+## Re-index documents after switching to real embeddings
+
+If documents were uploaded while the backend used fake/hash embeddings, **re-upload them in Knowledge Base** so chunks are embedded with `nomic-embed-text`. Otherwise vector search will miss relevant passages.

@@ -176,12 +176,17 @@ export default function DocAssistant() {
         return newM
       })
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const raw = err instanceof Error ? err.message : String(err)
+      let detail = raw
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed?.detail) detail = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail)
+      } catch { /* keep raw */ }
       setMsgs((m) => [...m, {
         role: 'ai',
         text: isAr
-          ? `تعذر الاتصال بمحرك الذكاء الاصطناعي. تأكد من تشغيل Ollama محلياً (ollama pull llama3.2:1b && ollama pull nomic-embed-text) أو ضبط OLLAMA_HOST على Render.\n\n${msg}`
-          : `Could not reach the AI engine. Ensure Ollama is running locally (ollama pull llama3.2:1b && ollama pull nomic-embed-text) or set OLLAMA_HOST on Render.\n\n${msg}`,
+          ? `تعذر تشغيل محرك الذكاء الاصطناعي على الخادم.\n\n${detail}`
+          : `AI engine is unavailable on the server.\n\n${detail}`,
       }])
     } finally {
       setTyping(false)
