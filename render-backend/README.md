@@ -1,36 +1,20 @@
 # NCEC Render Backend
 
-Production FastAPI service: **PaddleOCR** + **Vicuna-68M** (open-weight GGUF ~40 MB via `llama-cpp-python`) + **Supabase pgvector**.
+Production FastAPI: **PaddleOCR** + **grounded RAG** over Supabase.
 
-No Ollama. Chat weights are tiny enough for Render starter memory. Embeddings use a light 768-d vector (plus keyword hybrid search) so retrieval still works without a heavy embed model.
+- **Default answers:** extractive (quotes real retrieved passages — no tiny LLM hallucinations)
+- **Optional:** set `GEMINI_API_KEY` for Gemini Flash Lite generation + embeddings (0 MB local weights)
+- **Retrieval:** keyword search on `document_chunks` first, then vector match
 
-## Layout
+## Env vars
 
-| File | Role |
-|------|------|
-| `main.py` | FastAPI: OCR jobs, `/api/rag/chat`, `/api/llm/*`, health |
-| `rag.py` | Embed → Supabase match + keyword → tiny LLM / extractive fallback |
-| `llm_engine.py` | Download/load Vicuna-68M GGUF; light embeddings |
-| `start.sh` | Ensures GGUF present, starts uvicorn |
-| `Dockerfile` | Slim Python image; prebuilt `llama-cpp-python` CPU wheel + ~40 MB GGUF |
-
-## Env vars (Render)
-
-| Key | Example |
-|-----|---------|
-| `PORT` | `8100` |
-| `CHAT_MODEL` | `vicuna-68m` |
-| `MODEL_DIR` | `/app/models` |
-| `GGUF_NAME` | `vicuna-68m.Q3_K_S.gguf` |
-| `GGUF_URL` | Hugging Face resolve URL for the GGUF |
-| `SUPABASE_URL` | your project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | service role key |
+| Key | Required | Notes |
+|-----|----------|-------|
+| `SUPABASE_URL` | yes | Project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes | Service role |
+| `GEMINI_API_KEY` | optional | Improves fluency; get free key at https://aistudio.google.com/apikey |
+| `PORT` | no | Default `8100` |
 
 ## Health
 
-`GET /api/health` returns OCR + LLM engine status (weights size, ready flag).
-
-## Notes
-
-- If older documents were embedded with a different scheme, re-upload in Knowledge Base so chunks match the light 768-d vectors.
-- If the tiny LLM fails to load, RAG falls back to **extractive answers** from retrieved chunks (0 MB extra weights).
+`GET /api/health` → OCR + RAG engine status.

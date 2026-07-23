@@ -12,10 +12,10 @@ services:
       - key: PORT
         value: 8100
       - key: CHAT_MODEL
-        value: vicuna-68m
-      - key: MODEL_DIR
-        value: /app/models
+        value: extractive
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
         sync: false

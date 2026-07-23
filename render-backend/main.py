@@ -1,7 +1,7 @@
 """
-NCEC AI Platform — OCR + ultra-light open-weight RAG backend
-============================================================
-PaddleOCR + Vicuna-68M GGUF (~40 MB) via llama-cpp + Supabase.
+NCEC AI Platform — OCR + grounded RAG backend
+=============================================
+PaddleOCR + keyword/vector RAG (extractive, optional Gemini) + Supabase.
 """
 
 import os
@@ -20,8 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from rag import RAGError, run_rag_chat
-from llm_engine import embed_text, engine_status, generate_text, ensure_gguf
+from rag import RAGError, embed_text, engine_status, generate_text, run_rag_chat
 
 # ── PaddleOCR ───────────────────────────────────────────────────────────
 _ocr_engine = None
@@ -39,7 +38,7 @@ def get_ocr():
     return _ocr_engine
 
 
-app = FastAPI(title="NCEC OCR API (Render)", version="2.0.0")
+app = FastAPI(title="NCEC OCR API (Render)", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,14 +47,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def _warmup_model():
-    try:
-        ensure_gguf()
-    except Exception as e:
-        print(f"Model warmup warning: {e}")
 
 
 def pdf_page_to_image(doc: fitz.Document, page_index: int, dpi: int = 300) -> np.ndarray:
@@ -120,8 +111,7 @@ async def health():
         "service": "NCEC OCR Backend",
         "engine": "PaddleOCR",
         "lang": "ar",
-        "rag": "Vicuna-68M + Supabase",
-        "llm": engine_status(),
+        "rag": engine_status(),
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
     }
 
@@ -183,7 +173,7 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
 
 
 class LLMGenerateRequest(BaseModel):
-    model: str = "vicuna-68m"
+    model: str = "extractive"
     prompt: str
     system: Optional[str] = None
     stream: bool = False
@@ -221,9 +211,10 @@ async def rag_chat(req: RAGChatRequest):
 @app.post("/api/llm/generate")
 async def llm_generate(req: LLMGenerateRequest):
     try:
-        return JSONResponse({"response": generate_text(req.prompt, req.system or ""), "model": "vicuna-68m"})
+        text = generate_text(req.prompt, req.system or "")
+        return JSONResponse({"response": text, "model": engine_status().get("chat_model")})
     except Exception as e:
-        raise HTTPException(503, f"Tiny LLM error: {e}")
+        raise HTTPException(503, f"LLM error: {e}")
 
 
 @app.post("/api/llm/embeddings")

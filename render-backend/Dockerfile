@@ -1,6 +1,4 @@
-# NCEC backend — OCR + ultra-light open-weight LLM (no Ollama)
-# Chat weights: Vicuna-68M Q3_K_S GGUF (~40 MB)
-# llama-cpp-python: prebuilt CPU wheel (never compile from source on Render)
+# NCEC backend — OCR + grounded RAG (no local LLM weights)
 FROM python:3.10-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,24 +16,13 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir \
-        --only-binary=:all: \
-        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
-        "llama-cpp-python==0.2.62"
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN chmod +x /app/start.sh \
-    && mkdir -p /app/models
+RUN chmod +x /app/start.sh
 
-# Pre-download open-weight GGUF at build (~40 MB)
-ENV MODEL_DIR=/app/models
-ENV GGUF_NAME=vicuna-68m.Q3_K_S.gguf
-ENV GGUF_URL=https://huggingface.co/Felladrin/gguf-vicuna-68m/resolve/main/vicuna-68m.Q3_K_S.gguf
-ENV CHAT_MODEL=vicuna-68m
+ENV CHAT_MODEL=extractive
 ENV PORT=8100
-
-RUN python -c "from llm_engine import ensure_gguf; ensure_gguf()"
 
 EXPOSE 8100
 CMD ["/app/start.sh"]

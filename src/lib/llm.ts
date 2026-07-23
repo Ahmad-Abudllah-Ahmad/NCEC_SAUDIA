@@ -123,7 +123,7 @@ async function callGenerate(
 export async function generateResponse(
   prompt: string,
   context: string,
-  model = 'vicuna-68m',
+  model = 'extractive',
   onChunk?: (text: string) => void,
 ): Promise<string> {
   const systemPrompt = `You are a professional environmental AI assistant for the Saudi National Center for Environmental Compliance (NCEC).
@@ -158,7 +158,7 @@ export async function generateEmbedding(text: string, model = 'light-768'): Prom
 export async function generateLegalResponse(
   prompt: string,
   context: string,
-  model = 'vicuna-68m',
+  model = 'extractive',
   onChunk?: (text: string) => void,
 ): Promise<string> {
   const systemPrompt = `You are a specialized Executive AI Legal & Policy Assistant for NCEC staff.
@@ -171,7 +171,7 @@ Respond in the same language as the user's question.`
   return callGenerate(fullPrompt, systemPrompt, model, onChunk)
 }
 
-export async function translateText(text: string, targetLang: 'ar' | 'en', model = 'vicuna-68m'): Promise<string> {
+export async function translateText(text: string, targetLang: 'ar' | 'en', model = 'extractive'): Promise<string> {
   const prompt = targetLang === 'ar'
     ? `Translate the following text accurately into Arabic. Preserve markdown structure. Return ONLY the translation:\n\n${text}`
     : `Translate the following text accurately into English. Preserve markdown structure. Return ONLY the translation:\n\n${text}`
