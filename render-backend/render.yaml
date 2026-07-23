@@ -8,3 +8,13 @@ services:
     envVars:
       - key: PORT
         value: 8100
+      - key: OLLAMA_HOST
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CHAT_MODEL
+        value: llama3.2:1b
+      - key: EMBED_MODEL
+        value: nomic-embed-text

@@ -8,23 +8,10 @@ import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
 import { PageHeader, Card, Badge, Button, Modal, chartTooltip } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
-import { useGlobalDocuments } from '../store'
-import { generateResponse, generateEmbedding, translateText } from '../lib/llm'
-import { supabase } from '../lib/supabase'
+import { translateText } from '../lib/llm'
+import { askRAG } from '../lib/rag'
 
 type Citation = { doc: string; page: number; excerpt: string }
-
-
-
-const extractPageNumber = (text: string): number => {
-  if (!text) return 1
-  const pageMatch = text.match(/(?:\[Page\s*(\d+)\]|Page\s*(\d+))/i)
-  if (pageMatch) {
-    const p = parseInt(pageMatch[1] || pageMatch[2], 10)
-    if (!isNaN(p) && p > 0) return p
-  }
-  return 1
-}
 
 const mdComponents = {
   p: ({children}: any) => <p className="mb-2 last:mb-0 leading-relaxed whitespace-pre-wrap">{children}</p>,
@@ -128,7 +115,6 @@ export default function DocAssistant() {
   const [entireKb, setEntireKb] = useState(false)
   const [viewer, setViewer] = useState<Citation | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const globalDocs = useGlobalDocuments()
   
   const [translations, setTranslations] = useState<Record<number, { orig: string; trans: string; showing: 'orig' | 'trans' }>>({})
   const [translating, setTranslating] = useState<Record<number, boolean>>({})
@@ -170,76 +156,32 @@ export default function DocAssistant() {
     setMsgs((m) => [...m, { role: 'user', text: q }])
     setInput('')
     setTyping(true)
-    
+
     try {
-      // 1. Generate an embedding for the user's query
-      console.log('[RAG] Step 1: Generating embedding for query:', q);
-      const queryEmbedding = await generateEmbedding(q);
-      console.log('[RAG] Step 1 Done: Embedding generated, length:', queryEmbedding?.length);
+      setMsgs((m) => [...m, { role: 'ai', text: '', citations: [], isTyping: false }])
 
-      // 2. Perform semantic search via pgvector in Supabase
-      console.log('[RAG] Step 2: Calling match_document_chunks RPC...');
-      const { data: matchedChunks, error } = await supabase.rpc('match_document_chunks', {
-        query_embedding: queryEmbedding,
-        match_threshold: 0.2,
-        match_count: 5
-      });
-
-      if (error) {
-        console.error('[RAG] Step 2 RPC error:', error);
-      }
-      
-      let chunksToUse = matchedChunks || [];
-      console.log('[RAG] Step 2 Done: Matched chunks from vector DB:', chunksToUse.length);
-      chunksToUse.forEach((c: any, i: number) => {
-        console.log(`[RAG]   Chunk ${i+1}: doc="${c.document_name}", similarity=${c.similarity}, text="${c.chunk_text?.substring(0, 80)}..."`);
-      });
-
-      // 2b. Fallback: if vector search returned nothing, fetch documents directly
-      if (chunksToUse.length === 0) {
-        console.log('[RAG] Step 2b: No vector results. Falling back to direct document fetch...');
-        const { data: fallbackDocs, error: fbErr } = await supabase.from('documents').select('name, content');
-        if (fbErr) console.error('[RAG] Fallback fetch error:', fbErr);
-        
-        const docs = fallbackDocs || globalDocs;
-        if (docs.length > 0) {
-          chunksToUse = docs.slice(0, 1).map((d: any) => ({
-            document_name: d.name,
-            chunk_text: d.content?.substring(0, 2000) || '',
-            similarity: 0
-          }));
-          console.log('[RAG] Step 2b Done: Using fallback document');
-        }
-      }
-
-      // 3. Prepare the context for the LLM
-      const context = chunksToUse.map((c: any) => `Document Name: ${c.document_name}\nExcerpt: ${c.chunk_text}`).join('\n\n---\n\n');
-      console.log('[RAG] Step 3: Context prepared, length:', context.length, 'chars');
-      
-      // 5. Build top 1 single citation from results
-      const topChunk = chunksToUse[0]
-      const citations: Citation[] = topChunk ? [{
-        doc: topChunk.document_name || 'Executive Regulation For Controls and Procedures.pdf',
-        page: extractPageNumber(topChunk.chunk_text || ''), 
-        excerpt: topChunk.chunk_text ? (topChunk.chunk_text.length > 400 ? topChunk.chunk_text.substring(0, 400) + '...' : topChunk.chunk_text) : ''
-      }] : []
-      console.log('[RAG] Step 5: Citation built:', citations.length);
-      
-      setMsgs((m) => [...m, { role: 'ai', text: '', citations, isTyping: false }])
-      
-      await generateResponse(q, context, 'llama3.2:1b', (chunk) => {
+      const { answer, citations } = await askRAG(q, 'document', (chunk) => {
         setMsgs((m) => {
-          const newM = [...m];
-          newM[newM.length - 1].text += chunk;
-          return newM;
-        });
-      });
-    } catch (err: any) {
-      setMsgs((m) => [...m, { 
-        role: 'ai', 
-        text: isAr 
-          ? `عذراً، حدث خطأ أثناء الاتصال بالنموذج المحلي: ${err.message}` 
-          : `Sorry, there was an error connecting to the local model: ${err.message}` 
+          const newM = [...m]
+          newM[newM.length - 1].text += chunk
+          return newM
+        })
+      })
+
+      setMsgs((m) => {
+        const newM = [...m]
+        const last = newM[newM.length - 1]
+        if (!last.text) last.text = answer
+        last.citations = citations.length ? [citations[0]] : []
+        return newM
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMsgs((m) => [...m, {
+        role: 'ai',
+        text: isAr
+          ? `تعذر الاتصال بمحرك الذكاء الاصطناعي. تأكد من تشغيل Ollama محلياً (ollama pull llama3.2:1b && ollama pull nomic-embed-text) أو ضبط OLLAMA_HOST على Render.\n\n${msg}`
+          : `Could not reach the AI engine. Ensure Ollama is running locally (ollama pull llama3.2:1b && ollama pull nomic-embed-text) or set OLLAMA_HOST on Render.\n\n${msg}`,
       }])
     } finally {
       setTyping(false)

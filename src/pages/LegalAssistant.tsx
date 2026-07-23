@@ -5,8 +5,8 @@ import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
 import { PageHeader, Card, Badge, Button, ConfidenceRing, chartTooltip, Modal } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
-import { generateEmbedding, generateLegalResponse, translateText } from '../lib/llm'
-import { supabase } from '../lib/supabase'
+import { askRAG } from '../lib/rag'
+import { translateText } from '../lib/llm'
 
 const similarCases = [
   { id: 'CASE-2024-118', title: 'Industrial discharge violation — Yanbu facility', ar: 'مخالفة تصريف صناعي — منشأة ينبع', similarity: 94, outcome: 'Fine + corrective plan', outcomeAr: 'غرامة + خطة تصحيحية' },
@@ -66,16 +66,6 @@ const TypewriterMarkdown = ({ text, isTyping }: { text: string; isTyping?: boole
 
 type LegalCitation = { doc: string; page: number; match: number; excerpt: string; fullText: string }
 type SessionMsg = { role: 'user' | 'ai'; text: string; citations?: LegalCitation[]; isTyping?: boolean }
-
-const extractPageNumber = (text: string): number => {
-  if (!text) return 1
-  const pageMatch = text.match(/(?:\[Page\s*(\d+)\]|Page\s*(\d+))/i)
-  if (pageMatch) {
-    const p = parseInt(pageMatch[1] || pageMatch[2], 10)
-    if (!isNaN(p) && p > 0) return p
-  }
-  return 1
-}
 
 const cleanChunk = (text: string) => {
   if (!text) return ''
@@ -144,95 +134,38 @@ export default function LegalAssistant() {
     setTyping(true)
 
     try {
-      // 1. Generate query vector embedding
-      console.log('[Legal RAG] Step 1: Embedding query:', q)
-      const queryEmbedding = await generateEmbedding(q)
+      setSession((s) => [...s, { role: 'ai', text: '', isTyping: false }])
 
-      // 2. Perform vector search in Supabase vector DB
-      console.log('[Legal RAG] Step 2: Vector search via match_document_chunks RPC...')
-      const { data: matchedChunks, error } = await supabase.rpc('match_document_chunks', {
-        query_embedding: queryEmbedding,
-        match_threshold: 0.0,
-        match_count: 5,
-      })
-
-      if (error) {
-        console.error('[Legal RAG] RPC error:', error)
-      }
-
-      let chunksToUse = matchedChunks || []
-      console.log('[Legal RAG] Matched chunks:', chunksToUse.length)
-
-      if (chunksToUse.length === 0) {
-        console.log('[Legal RAG] Step 2b: No vector results. Fetching documents fallback...')
-        const { data: fallbackDocs } = await supabase.from('documents').select('name, content')
-        if (fallbackDocs && fallbackDocs.length > 0) {
-          chunksToUse = fallbackDocs.slice(0, 1).map((d: any) => ({
-            document_name: d.name || 'Executive Regulation For Controls and Procedures.pdf',
-            chunk_text: d.content || '',
-            similarity: 0.95
-          }))
-        } else {
-          chunksToUse = [{
-            document_name: 'Executive Regulation For Controls and Procedures.pdf',
-            chunk_text: '[Page 1] Article (4) – Soil Protection Standards. Executive Regulation for the Protection of Aqueous Media from Pollution (National Center for Environmental Compliance). Controls for injected treated wastewater into underground wells and soil protection limits.',
-            similarity: 0.95
-          }]
-        }
-      }
-
-      // 3. Prepare cleaned context strictly from vector DB chunks
-      const context = chunksToUse
-        .map((c: any) => `Document Name: ${c.document_name}\nClause Text: ${cleanChunk(c.chunk_text || '')}`)
-        .join('\n\n---\n\n')
-
-      // 4. Generate Legal AI response using strict legal prompt
-      // 5. Deduplicate citations to show ONLY the top 1 single best citation
-      const uniqueDocMap = new Map<string, any>()
-      for (const c of chunksToUse) {
-        if (c.similarity >= 0) {
-          if (!uniqueDocMap.has(c.document_name) || c.similarity > uniqueDocMap.get(c.document_name).similarity) {
-            uniqueDocMap.set(c.document_name, c)
-          }
-        }
-      }
-      const topChunks = Array.from(uniqueDocMap.values())
-        .sort((a, b) => b.similarity - a.similarity)
-        .slice(0, 1)
-
-      const citations: LegalCitation[] = topChunks.map((c: any) => {
-        const rawText = c.chunk_text || ''
-        const pageNum = extractPageNumber(rawText)
-        const cleaned = cleanChunk(rawText)
-        return {
-          doc: c.document_name,
-          page: pageNum,
-          match: Math.round((c.similarity || 0) * 100),
-          excerpt: cleaned,
-          fullText: cleaned
-        }
-      })
-
-      setSession((s) => [...s, {
-        role: 'ai',
-        text: '',
-        citations: citations.length > 0 ? citations : undefined,
-        isTyping: false
-      }])
-
-      await generateLegalResponse(q, context, 'llama3.2:1b', (chunk) => {
+      const { answer, citations } = await askRAG(q, 'legal', (chunk) => {
         setSession((s) => {
-          const newS = [...s];
-          newS[newS.length - 1].text += chunk;
-          return newS;
-        });
-      });
-    } catch (err: any) {
+          const newS = [...s]
+          newS[newS.length - 1].text += chunk
+          return newS
+        })
+      })
+
+      const legalCitations: LegalCitation[] = citations.slice(0, 1).map((c) => ({
+        doc: c.doc,
+        page: c.page,
+        match: Math.round((c.similarity ?? 0.5) * 100),
+        excerpt: cleanChunk(c.excerpt),
+        fullText: cleanChunk(c.excerpt),
+      }))
+
+      setSession((s) => {
+        const newS = [...s]
+        const last = newS[newS.length - 1]
+        if (!last.text) last.text = answer
+        last.citations = legalCitations.length ? legalCitations : undefined
+        return newS
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
       setSession((s) => [...s, {
         role: 'ai',
         text: isAr
-          ? `عذراً، حدث خطأ أثناء الاتصال بالنموذج المحلي: ${err.message}`
-          : `Sorry, an error occurred while connecting to the local model: ${err.message}`,
+          ? `تعذر الاتصال بمحرك الذكاء الاصطناعي القانوني. تأكد من تشغيل Ollama (ollama pull llama3.2:1b && ollama pull nomic-embed-text) أو ضبط OLLAMA_HOST على Render.\n\n${msg}`
+          : `Could not reach the legal AI engine. Ensure Ollama is running (ollama pull llama3.2:1b && ollama pull nomic-embed-text) or set OLLAMA_HOST on Render.\n\n${msg}`,
       }])
     } finally {
       setTyping(false)

@@ -2,14 +2,16 @@
 NCEC AI Platform — PaddleOCR Backend Server for Render
 =====================================================
 Real-time Arabic & English OCR extraction using PaddleOCR.
-Processes PDF pages one-by-one and streams results back to the frontend.
+RAG chat via Ollama (local model weights) + Supabase pgvector.
 """
 
+import json
 import os
 import uuid
 import tempfile
 import threading
 import traceback
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +21,9 @@ from PIL import Image
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from rag import RAGError, run_rag_chat
 
 # ── PaddleOCR initialisation ────────────────────────────────────────────
 _ocr_engine = None
@@ -76,14 +81,10 @@ def ocr_image(img_array: np.ndarray) -> str:
 
 
 def process_job_sync(job_id: str, file_path: str, file_type: str):
-    """
-    Background worker: converts each page to an image, runs OCR,
-    and updates the job store in real time.
-    """
+    """Background worker: OCR each page and update job store in real time."""
     job = jobs[job_id]
     try:
         if file_type in ("image/png", "image/jpeg", "image/jpg", "image/tiff"):
-            # Single image file
             job["total_pages"] = 1
             img = Image.open(file_path).convert("RGB")
             img_array = np.array(img)
@@ -93,7 +94,6 @@ def process_job_sync(job_id: str, file_path: str, file_type: str):
             job["status"] = "completed"
             job["pct"] = 100
         else:
-            # PDF file
             doc = fitz.open(file_path)
             total = len(doc)
             job["total_pages"] = total
@@ -122,11 +122,17 @@ def process_job_sync(job_id: str, file_path: str, file_type: str):
             pass
 
 
-# ── Routes ──────────────────────────────────────────────────────────────
+# ── OCR Routes ──────────────────────────────────────────────────────────
 @app.get("/")
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "NCEC OCR Backend", "engine": "PaddleOCR", "lang": "ar"}
+    return {
+        "status": "ok",
+        "service": "NCEC OCR Backend",
+        "engine": "PaddleOCR",
+        "lang": "ar",
+        "rag": "Ollama + Supabase pgvector",
+    }
 
 
 @app.post("/api/ocr/upload")
@@ -200,165 +206,100 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
     return JSONResponse(response)
 
 
-# ── LLM Relay / Proxy Endpoints ─────────────────────────────────────────
-import json
-import urllib.request
-import hashlib
-from pydantic import BaseModel
-
+# ── LLM + RAG Routes ───────────────────────────────────────────────────
 class LLMGenerateRequest(BaseModel):
     model: str = "llama3.2:1b"
     prompt: str
     system: Optional[str] = None
     stream: bool = False
 
+
 class LLMEmbeddingRequest(BaseModel):
     model: str = "nomic-embed-text"
     prompt: str
 
-import re
 
-def synthesize_smart_response(prompt: str, system: Optional[str] = None) -> str:
-    text_to_search = (system or "") + " " + (prompt or "")
-    is_ar = bool(re.search(r'[\u0600-\u06FF]', text_to_search))
-    
-    # 1. Soil Protection / Article 4
-    if any(k in text_to_search.lower() for k in ["soil", "المادة (٤)", "المادة 4", "article (4)", "article 4"]):
-        if is_ar:
-            return """## المادة (٤) — معايير حماية التربة والأوساط المائية
+class RAGChatRequest(BaseModel):
+    question: str
+    mode: str = "document"
+    match_threshold: float = 0.15
+    match_count: int = 5
 
-### ملخص المادة:
-تحدد هذه المادة معايير حماية التربة والأوساط المائية من التلوث، وفقاً للائحة التنفيذية الصادرة عن المركز الوطني للرقابة على الالتزام البيئي.
 
-### الأحكام الرئيسية:
-- **حماية الأوساط المائية والتربة**: حظر تصريف المواد الملوثة أو حقن مياه الصرف المعالجة بدون ترخيص مسبق.
-- **ضوابط ومعايير المعالجة**: التزام جميع المنشآت بمعايير الجودة المعتمدة وحقن مياه الصرف المعالجة وفق حدود الأثر البيئي المقبولة.
-- **التصاريح والرصد الدوري**: إلزام المنشآت بالحصول على تصاريح الحفر والحقن والتشغيل مع تقديم تقارير رصد بيئي دورية.
+@app.post("/api/rag/chat")
+async def rag_chat(req: RAGChatRequest):
+    """Full RAG: Ollama embed → Supabase pgvector → Ollama generate (context-only)."""
+    try:
+        result = run_rag_chat(
+            question=req.question,
+            mode=req.mode,
+            match_threshold=req.match_threshold,
+            match_count=req.match_count,
+        )
+        return JSONResponse(result)
+    except RAGError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"RAG pipeline error: {e}")
 
-### المتطلبات التنظيمية:
-- تقديم دراسة تقييم الأثر البيئي وتطبيق أفضل التقنيات المتاحة (BAT).
-- حساب الدفعات المالية والتكاليف البيئية بناءً على نوع التصريح وفئة المنشأة."""
-        else:
-            return """## Article (4) – Soil Protection Standards
-
-### Summary:
-This article outlines soil protection standards in Saudi Arabia, as specified by Executive Regulation for the Protection of Aqueous Media from Pollution (National Center for Environmental Compliance).
-
-### Key Provisions:
-- **Aquatic & Soil Protection**: The regulation sets out to protect soil and aquatic media from pollution.
-- **Treated Water Injection**: It defines and regulates activities related to injecting treated wastewater into underground wells.
-- **Permits & Standards**: Specifies requirements for treated water injection permits, treatment process standards, well drilling/operating permits, and environmental monitoring.
-
-### Requirements:
-- Injection of treated wastewater into underground wells must comply with minimum standards outlined in the regulation.
-- Injecting treated wastewater should be done to cover all segments across the chain of production without duplication."""
-
-    # 2. Extract from System Context if available
-    if system and "Context Documents" in system:
-        parts = system.split("Context Documents:")
-        if len(parts) > 1 and parts[1].strip():
-            clean_ctx = parts[1].strip()
-            clean_ctx = re.sub(r'Document Name:.*', '', clean_ctx)
-            clean_ctx = re.sub(r'Clause Text:.*', '', clean_ctx).strip()
-            if len(clean_ctx) > 30:
-                if is_ar:
-                    return f"## ملخص نتائج الوثائق البيئية\n\n{clean_ctx[:600]}\n\n- **التوصية**: الالتزام باللائحة التنفيذية والاشتراطات الصادرة عن المركز الوطني للرقابة على الالتزام البيئي."
-                else:
-                    return f"## Executive Document Summary\n\n{clean_ctx[:600]}\n\n- **Recommendation**: Comply strictly with Executive Regulations and standards issued by the National Center for Environmental Compliance."
-
-    # Translation handling
-    if "Translate the following text" in prompt or "ترجمة" in prompt:
-        is_to_ar = "accurately into Arabic" in prompt
-        clean_src = re.sub(r'^Translate the following text accurately into (Arabic|English).*?:\s*', '', prompt, flags=re.DOTALL | re.IGNORECASE).strip()
-        
-        exact_matches_to_ar = {
-            "Under Article 32 of the Environmental Law and Article 18 of the Executive Regulation": "بموجب المادة ٣٢ من نظام البيئة والمادة ١٨ من اللائحة التنفيذية، فإن التكرار الثالث خلال ستة أشهر يستوجب: 1. تصعيد المخالفة إلى الدرجة الثانية 2. إلزام المنشأة بخطة تصحيحية 3. جواز الإيقاف الجزئي للنشاط",
-            "Key differences between Category 1 and Category 2 facilities": "الفروقات الرئيسية بين منشآت الفئة الأولى والفئة الثانية:\n\n• الدراسة البيئية: تتطلب الفئة الأولى دراسة كاملة لتقييم الأثر البيئي؛ بينما تتطلب الفئة الثانية تقريراً مبسطاً فقط.\n• فترة المراجعة: 60 يوم عمل (الفئة الأولى) مقابل 30 يوم عمل (الفئة الثانية).\n• الرصد: تُلزم الفئة الأولى بالرصد الذاتي المستمر مع تقارير ربع سنوية؛ وتتطلب الفئة الثانية تقارير نصف سنوية.\n• خطة الطوارئ: إلزامية للفئة الأولى؛ ومطلوبة للفئة الثانية فقط عند التعامل مع المواد الخطرة.\n\nتتطلب كلتا الفئتين التجديد كل 5 سنوات وتخضعان للتفتيش الدوري.",
-            "Compare these requirements with Category 2 facilities and summarize the differences in English.": "قارن هذه المتطلبات مع منشآت الفئة الثانية ولخص الفروقات باللغة الإنجليزية."
-        }
-        
-        exact_matches_to_en = {
-            "بموجب المادة ٣٢ من نظام البيئة والمادة ١٨ من اللائحة التنفيذية": "Under Article 32 of the Environmental Law and Article 18 of the Executive Regulation, a third recurrence within six months triggers: 1. Escalation to a second-degree violation 2. Mandatory corrective action plan 3. Discretionary partial suspension",
-            "وفقاً للائحة التنفيذية لنظام البيئة، تتطلب المنشآت الصناعية من الفئة الأولى": "According to the Executive Regulation of the Environmental Law, Category 1 industrial facilities (high environmental impact activities) require the following:\n\n1. Submission of a full Environmental Impact Assessment (EIA) study prepared by a qualified consultant\n2. Environmental management plan including a self-monitoring program\n3. Identification of Best Available Techniques (BAT) for emission treatment\n4. Environmental emergency and incident response plan\n\nApplication review period: 60 business days from complete documentation.",
-            "ما هي متطلبات الحصول على التصريح البيئي للمنشآت الصناعية من الفئة الأولى؟": "What are the requirements for obtaining an environmental permit for Category 1 industrial facilities?"
-        }
-
-        if is_to_ar:
-            for en_text, ar_text in exact_matches_to_ar.items():
-                if en_text in clean_src:
-                    return ar_text
-            return clean_src
-        else:
-            for ar_text, en_text in exact_matches_to_en.items():
-                if ar_text in clean_src:
-                    return en_text
-            return clean_src
-
-    # 3. Standard response based on language
-    if is_ar:
-        return "بموجب نظام البيئة ولائحته التنفيذية الصادرة عن المركز الوطني للرقابة على الالتزام البيئي، تنطبق الشروط والمعايير المعتمدة على كافة المنشآت والأنشطة الخاضعة للرقابة البيئية."
-    else:
-        return "Under the Environmental Law and Executive Regulations issued by the National Center for Environmental Compliance (NCEC), standard statutory conditions apply to all registered facilities and environmental activities."
 
 @app.post("/api/llm/generate")
 async def proxy_llm_generate(req: LLMGenerateRequest):
-    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-    ollama_url = f"{ollama_host.rstrip('/')}/api/generate"
-    payload = {
-        "model": req.model,
-        "prompt": req.prompt,
-        "stream": req.stream,
-    }
+    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    ollama_url = f"{ollama_host}/api/generate"
+    payload = {"model": req.model, "prompt": req.prompt, "stream": False}
     if req.system:
         payload["system"] = req.system
-    
+
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         ollama_url,
         data=data,
         headers={"Content-Type": "application/json"},
-        method="POST"
+        method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as resp:
+        with urllib.request.urlopen(request, timeout=180) as resp:
             res_data = json.loads(resp.read().decode("utf-8"))
             if res_data and res_data.get("response"):
                 return JSONResponse(res_data)
     except Exception as e:
-        pass
+        raise HTTPException(
+            503,
+            f"Ollama unreachable at {ollama_host}. Set OLLAMA_HOST and pull: ollama pull {req.model}. Error: {e}",
+        )
 
-    # Use smart response synthesis instead of echoing raw prompt
-    return JSONResponse({
-        "response": synthesize_smart_response(req.prompt, req.system)
-    })
+    raise HTTPException(503, "Ollama returned empty response")
+
 
 @app.post("/api/llm/embeddings")
 async def proxy_llm_embeddings(req: LLMEmbeddingRequest):
-    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-    ollama_url = f"{ollama_host.rstrip('/')}/api/embeddings"
-    payload = {
-        "model": req.model,
-        "prompt": req.prompt,
-    }
+    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    ollama_url = f"{ollama_host}/api/embeddings"
+    payload = {"model": req.model, "prompt": req.prompt}
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         ollama_url,
         data=data,
         headers={"Content-Type": "application/json"},
-        method="POST"
+        method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as resp:
+        with urllib.request.urlopen(request, timeout=60) as resp:
             res_data = json.loads(resp.read().decode("utf-8"))
-            return JSONResponse(res_data)
+            if res_data.get("embedding"):
+                return JSONResponse(res_data)
     except Exception as e:
-        h = hashlib.sha256(req.prompt.encode('utf-8')).hexdigest()
-        fake_vec = [((int(h[i % len(h)], 16) / 15.0) * 2 - 1) for i in range(768)]
-        return JSONResponse({"embedding": fake_vec})
+        raise HTTPException(
+            503,
+            f"Ollama embeddings unreachable at {ollama_host}. Pull: ollama pull {req.model}. Error: {e}",
+        )
+
+    raise HTTPException(503, "Ollama returned no embedding vector")
 
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8100))
-    print(f"🚀 NCEC OCR Server starting on port {port}")
+    print(f"🚀 NCEC Backend starting on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

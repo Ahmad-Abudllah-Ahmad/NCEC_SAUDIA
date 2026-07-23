@@ -9,6 +9,20 @@ export type DocumentData = {
   tags?: string[];
 };
 
+/** Chunk text with overlap for better retrieval quality. */
+function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const end = Math.min(i + chunkSize, text.length);
+    const slice = text.slice(i, end).trim();
+    if (slice) chunks.push(slice);
+    if (end >= text.length) break;
+    i += chunkSize - overlap;
+  }
+  return chunks;
+}
+
 class Store {
   documents: DocumentData[] = [];
   listeners: (() => void)[] = [];
@@ -19,11 +33,8 @@ class Store {
     this.initialized = true;
     try {
       await this.refetch();
-      
-      // Subscribe to real-time changes
       supabase.channel('public:documents')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, () => {
-          console.log('Real-time change detected in Supabase. Refetching documents...');
           this.refetch();
         })
         .subscribe();
@@ -46,37 +57,28 @@ class Store {
   }
 
   async addDocument(doc: DocumentData) {
-    // Optimistic local update
     this.documents.push(doc);
     this.notify();
 
     try {
-      // 1. Persist document to Supabase
-      const { data: docData, error: docError } = await supabase.from('documents').insert([{ 
-        name: doc.name, 
+      const { data: docData, error: docError } = await supabase.from('documents').insert([{
+        name: doc.name,
         content: doc.content,
         category: doc.category,
-        tags: doc.tags
+        tags: doc.tags,
       }]).select('id').single();
 
       if (docError) throw docError;
       if (!docData) throw new Error('No document ID returned');
 
-      // 2. Chunk text and generate embeddings
-      const chunkSize = 1000; // Overlapping chunks can be implemented later
-      const chunks = [];
-      for (let i = 0; i < doc.content.length; i += chunkSize) {
-        chunks.push(doc.content.substring(i, i + chunkSize));
-      }
+      const chunks = chunkText(doc.content);
 
-      // 3. Save chunks and embeddings
       for (const chunk of chunks) {
-        if (!chunk.trim()) continue;
         const embedding = await generateEmbedding(chunk);
         const { error: chunkError } = await supabase.from('document_chunks').insert([{
           document_id: docData.id,
           chunk_text: chunk,
-          embedding: embedding
+          embedding,
         }]);
         if (chunkError) console.error('Chunk insert error:', chunkError);
       }
@@ -102,7 +104,7 @@ export const globalStore = new Store();
 export function useGlobalDocuments() {
   const [docs, setDocs] = useState(globalStore.documents);
   useEffect(() => {
-    globalStore.init(); // Fetch existing docs on first use
+    globalStore.init();
     return globalStore.subscribe(() => {
       setDocs([...globalStore.documents]);
     });
