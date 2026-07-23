@@ -46,16 +46,25 @@ export async function ragChat(
 
   // Production / Render: use server-side RAG pipeline
   if (endpoints.ragChat) {
-    const res = await fetch(endpoints.ragChat, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        question,
-        mode,
-        match_threshold: matchThreshold,
-        match_count: matchCount,
-      }),
-    })
+    let res: Response
+    try {
+      res = await fetch(endpoints.ragChat, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          mode,
+          match_threshold: matchThreshold,
+          match_count: matchCount,
+        }),
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new Error(
+        `Cannot reach RAG backend at ${endpoints.ragChat}. ` +
+          `The server may be restarting or overloaded. (${msg})`,
+      )
+    }
     if (!res.ok) {
       const errText = await res.text()
       throw new Error(errText || `RAG backend error (${res.status})`)

@@ -50,8 +50,9 @@ app = FastAPI(title="NCEC OCR API (Render)", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
+    # credentials=True is incompatible with allow_origins=["*"] and breaks browser fetch
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -230,7 +231,7 @@ class RAGChatRequest(BaseModel):
 
 @app.post("/api/rag/chat")
 async def rag_chat(req: RAGChatRequest):
-    """Full RAG: Ollama embed → Supabase pgvector → Ollama generate (context-only)."""
+    """RAG: Ollama embed → Supabase pgvector → extractive answer (default; no chat LLM OOM)."""
     try:
         result = run_rag_chat(
             question=req.question,
@@ -247,6 +248,22 @@ async def rag_chat(req: RAGChatRequest):
 
 @app.post("/api/llm/generate")
 async def proxy_llm_generate(req: LLMGenerateRequest):
+    """Chat generate is disabled by default on Starter (OOM). Enable with USE_LLM_GENERATE=true."""
+    use_llm = os.getenv("USE_LLM_GENERATE", "false").lower() in ("1", "true", "yes")
+    if not use_llm:
+        # Safe stub so the frontend does not crash / kill the instance
+        snippet = (req.prompt or "")[:800]
+        return JSONResponse(
+            {
+                "response": (
+                    "Chat LLM generation is disabled on this server (memory limit). "
+                    "Use Document / Legal assistants — they answer from the knowledge base via embeddings.\n\n"
+                    f"Prompt excerpt:\n{snippet}"
+                ),
+                "model": "extractive-stub",
+            }
+        )
+
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
     ollama_url = f"{ollama_host}/api/generate"
     payload = {"model": req.model, "prompt": req.prompt, "stream": False}

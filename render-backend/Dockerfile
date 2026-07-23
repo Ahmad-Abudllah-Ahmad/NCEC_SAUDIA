@@ -1,5 +1,5 @@
-# NCEC OCR + RAG backend — lightweight Ollama for Render
-# Chat: qwen2:0.5b (~352MB)  |  Embed: nomic-embed-text (768-d)
+# NCEC OCR + RAG backend — embeddings-only Ollama (Render Starter RAM safe)
+# Embed: nomic-embed-text (768-d). Chat LLM disabled by default (extractive RAG).
 FROM python:3.10-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,13 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Ollama (CPU) — requires zstd for archive extraction
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# Pre-pull lightweight model weights
+# Pre-pull embed model only (chat models OOM on Starter ~512MB)
 ENV OLLAMA_HOST=0.0.0.0:11434
 ENV OLLAMA_MAX_LOADED_MODELS=1
 RUN ollama serve >/tmp/ollama-build.log 2>&1 & \
     sleep 10 && \
     ollama pull nomic-embed-text && \
-    ollama pull qwen2:0.5b && \
     pkill ollama || true && \
     sleep 2
 
@@ -38,7 +37,8 @@ RUN chmod +x /app/start.sh
 
 ENV OLLAMA_HOST=http://127.0.0.1:11434
 ENV EMBED_MODEL=nomic-embed-text
-ENV CHAT_MODEL=qwen2:0.5b
+ENV CHAT_MODEL=extractive
+ENV USE_LLM_GENERATE=false
 ENV OLLAMA_KEEP_ALIVE=30s
 ENV OLLAMA_NUM_PARALLEL=1
 ENV OLLAMA_MAX_LOADED_MODELS=1

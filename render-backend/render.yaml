@@ -16,7 +16,9 @@ services:
       - key: EMBED_MODEL
         value: nomic-embed-text
       - key: CHAT_MODEL
-        value: qwen2:0.5b
+        value: extractive
+      - key: USE_LLM_GENERATE
+        value: "false"
       - key: OLLAMA_KEEP_ALIVE
         value: 30s
       - key: OLLAMA_NUM_PARALLEL

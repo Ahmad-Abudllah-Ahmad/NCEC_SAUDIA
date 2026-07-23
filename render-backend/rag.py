@@ -14,9 +14,11 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
+# Chat LLMs OOM on Render Starter — embeddings-only Ollama + extractive answers by default.
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen2:0.5b")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "extractive")
+USE_LLM_GENERATE = os.getenv("USE_LLM_GENERATE", "false").lower() in ("1", "true", "yes")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
@@ -191,19 +193,46 @@ CRITICAL RULES:
 4. Respond in the same language as the user's question."""
 
 
+def synthesize_extractive(question: str, chunks: list[dict], mode: str) -> str:
+    """Build an answer from retrieved chunks without loading a chat LLM (avoids OOM)."""
+    is_ar = bool(re.search(r"[\u0600-\u06FF]", question))
+    if mode == "legal":
+        heading = "## الملخص القانوني" if is_ar else "## Executive Legal Summary"
+        sub = "## المواد / البنود ذات الصلة" if is_ar else "## Applicable Excerpts"
+    else:
+        heading = "## ملخص من قاعدة المعرفة" if is_ar else "## Answer from Knowledge Base"
+        sub = "## المقاطع المسترجعة" if is_ar else "## Retrieved Passages"
+
+    intro = (
+        "تمت الإجابة من قاعدة المعرفة (بحث دلالي). المقاطع التالية هي الأكثر صلة بسؤالك:"
+        if is_ar
+        else "Answered from the knowledge base (semantic search). The passages below are most relevant to your question:"
+    )
+    parts = [heading, "", intro, "", sub]
+    for i, c in enumerate(chunks[:4], 1):
+        name = c.get("document_name", "Document")
+        text = clean_chunk(c.get("chunk_text", ""))[:1200]
+        sim = float(c.get("similarity") or 0)
+        parts.append(f"\n### {i}. {name} ({sim:.0%} match)\n\n{text}")
+    return "\n".join(parts).strip()
+
+
 def ollama_status() -> dict:
     """Diagnostic payload for /api/health."""
     try:
         tags = _http_json(f"{OLLAMA_HOST}/api/tags", payload=None, timeout=5, method="GET")
         models = [m.get("name", "") for m in tags.get("models", [])]
+        embed_ready = any(EMBED_MODEL in m for m in models)
+        chat_ready = (not USE_LLM_GENERATE) or any(CHAT_MODEL in m for m in models)
         return {
             "reachable": True,
             "host": OLLAMA_HOST,
             "models": models,
             "embed_model": EMBED_MODEL,
             "chat_model": CHAT_MODEL,
-            "embed_ready": any(EMBED_MODEL in m for m in models),
-            "chat_ready": any(CHAT_MODEL in m for m in models),
+            "use_llm_generate": USE_LLM_GENERATE,
+            "embed_ready": embed_ready,
+            "chat_ready": chat_ready,
         }
     except Exception as e:
         return {
@@ -212,6 +241,7 @@ def ollama_status() -> dict:
             "error": str(e),
             "embed_model": EMBED_MODEL,
             "chat_model": CHAT_MODEL,
+            "use_llm_generate": USE_LLM_GENERATE,
         }
 
 
@@ -240,24 +270,26 @@ def run_rag_chat(
                 if k["document_name"] not in seen:
                     chunks.append(k)
 
+    engine = "extractive+nomic-embed" if not USE_LLM_GENERATE else CHAT_MODEL
+
     if not chunks:
         no_info = (
             "I do not have enough information in the provided documents to answer this question."
             if not re.search(r"[\u0600-\u06FF]", question)
             else "لا تتوفر معلومات كافية في الوثائق المتاحة للإجابة على هذا السؤال."
         )
-        return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": CHAT_MODEL}
+        return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": engine}
 
-    context = "\n\n---\n\n".join(
-        f"Document: {c.get('document_name', 'Unknown')}\nSimilarity: {c.get('similarity', 0):.2f}\nText: {clean_chunk(c.get('chunk_text', ''))}"
-        for c in chunks
-    )
-
-    system = LEGAL_SYSTEM if mode == "legal" else DOCUMENT_SYSTEM
-    full_system = f"{system}\n\nContext Documents:\n{context}"
-    prompt = f"User Question:\n{question}"
-
-    answer = ollama_generate(prompt, full_system)
+    if USE_LLM_GENERATE:
+        context = "\n\n---\n\n".join(
+            f"Document: {c.get('document_name', 'Unknown')}\nSimilarity: {c.get('similarity', 0):.2f}\nText: {clean_chunk(c.get('chunk_text', ''))}"
+            for c in chunks
+        )
+        system = LEGAL_SYSTEM if mode == "legal" else DOCUMENT_SYSTEM
+        full_system = f"{system}\n\nContext Documents:\n{context}"
+        answer = ollama_generate(f"User Question:\n{question}", full_system)
+    else:
+        answer = synthesize_extractive(question, chunks, mode)
 
     citations = []
     for c in chunks[:3]:
@@ -273,5 +305,5 @@ def run_rag_chat(
         "answer": answer,
         "citations": citations,
         "chunks_used": len(chunks),
-        "engine": CHAT_MODEL,
+        "engine": engine,
     }

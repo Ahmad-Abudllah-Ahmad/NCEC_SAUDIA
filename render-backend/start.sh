@@ -2,12 +2,13 @@
 set -euo pipefail
 
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
-CHAT_MODEL="${CHAT_MODEL:-qwen2:0.5b}"
+CHAT_MODEL="${CHAT_MODEL:-extractive}"
+USE_LLM_GENERATE="${USE_LLM_GENERATE:-false}"
 
 echo "═══════════════════════════════════════════"
 echo " NCEC Backend — Ollama + FastAPI"
 echo " Embed: ${EMBED_MODEL}"
-echo " Chat:  ${CHAT_MODEL}"
+echo " Chat:  ${CHAT_MODEL} (USE_LLM_GENERATE=${USE_LLM_GENERATE})"
 echo "═══════════════════════════════════════════"
 
 # Bind address for the daemon only (do NOT export this into the Python process)
@@ -48,7 +49,13 @@ ensure_model() {
 }
 
 ensure_model "$EMBED_MODEL"
-ensure_model "$CHAT_MODEL"
+
+# Only pull a chat model when explicitly enabled (needs more RAM than Starter)
+if [ "$USE_LLM_GENERATE" = "true" ] || [ "$USE_LLM_GENERATE" = "1" ] || [ "$USE_LLM_GENERATE" = "yes" ]; then
+  if [ "$CHAT_MODEL" != "extractive" ] && [ -n "$CHAT_MODEL" ]; then
+    ensure_model "$CHAT_MODEL"
+  fi
+fi
 
 echo "→ Models available:"
 ollama list || true
