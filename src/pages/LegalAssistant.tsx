@@ -187,9 +187,6 @@ export default function LegalAssistant() {
         .join('\n\n---\n\n')
 
       // 4. Generate Legal AI response using strict legal prompt
-      console.log('[Legal RAG] Step 4: Calling Ollama generateLegalResponse...')
-      const response = await generateLegalResponse(q, context)
-
       // 5. Deduplicate citations to show ONLY the top 1 single best citation
       const uniqueDocMap = new Map<string, any>()
       for (const c of chunksToUse) {
@@ -218,10 +215,18 @@ export default function LegalAssistant() {
 
       setSession((s) => [...s, {
         role: 'ai',
-        text: response,
+        text: '',
         citations: citations.length > 0 ? citations : undefined,
-        isTyping: true
+        isTyping: false
       }])
+
+      await generateLegalResponse(q, context, 'llama3.2:1b', (chunk) => {
+        setSession((s) => {
+          const newS = [...s];
+          newS[newS.length - 1].text += chunk;
+          return newS;
+        });
+      });
     } catch (err: any) {
       setSession((s) => [...s, {
         role: 'ai',

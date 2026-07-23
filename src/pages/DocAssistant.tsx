@@ -216,11 +216,6 @@ export default function DocAssistant() {
       const context = chunksToUse.map((c: any) => `Document Name: ${c.document_name}\nExcerpt: ${c.chunk_text}`).join('\n\n---\n\n');
       console.log('[RAG] Step 3: Context prepared, length:', context.length, 'chars');
       
-      // 4. Query Ollama local LLM
-      console.log('[RAG] Step 4: Sending to LLM...');
-      const response = await generateResponse(q, context);
-      console.log('[RAG] Step 4 Done: LLM responded, length:', response?.length);
-      
       // 5. Build top 1 single citation from results
       const topChunk = chunksToUse[0]
       const citations: Citation[] = topChunk ? [{
@@ -230,7 +225,15 @@ export default function DocAssistant() {
       }] : []
       console.log('[RAG] Step 5: Citation built:', citations.length);
       
-      setMsgs((m) => [...m, { role: 'ai', text: response, citations, isTyping: true }])
+      setMsgs((m) => [...m, { role: 'ai', text: '', citations, isTyping: false }])
+      
+      await generateResponse(q, context, 'llama3.2:1b', (chunk) => {
+        setMsgs((m) => {
+          const newM = [...m];
+          newM[newM.length - 1].text += chunk;
+          return newM;
+        });
+      });
     } catch (err: any) {
       setMsgs((m) => [...m, { 
         role: 'ai', 

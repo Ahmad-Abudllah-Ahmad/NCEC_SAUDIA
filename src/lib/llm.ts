@@ -21,16 +21,14 @@ const getEndpoints = () => {
   }
 }
 
-export async function generateResponse(prompt: string, context: string, model = 'llama3.2:1b'): Promise<string> {
+export async function generateResponse(prompt: string, context: string, model = 'llama3.2:1b', onChunk?: (text: string) => void): Promise<string> {
   const systemPrompt = `You are a professional environmental AI assistant for the Saudi National Center for Environmental Compliance (NCEC). 
 CRITICAL RULE: You MUST answer the user's question accurately based STRICTLY and ONLY on the provided context from the database documents below.
 Do NOT use any outside knowledge. Do NOT make up information.
 If the answer cannot be found entirely within the provided context, you MUST politely say: "I do not have enough information in the provided documents to answer this question."
-Always respond in the same language as the user's question (Arabic or English).
+Always respond in the same language as the user's question (Arabic or English).`;
 
-Context Documents:
-${context}
-`;
+  const fullPrompt = `Context Documents:\n${context}\n\nUser Question:\n${prompt}`;
 
   try {
     const endpoints = getEndpoints()
@@ -41,15 +39,32 @@ ${context}
       },
       body: JSON.stringify({
         model: model,
-        prompt: prompt,
+        prompt: fullPrompt,
         system: systemPrompt,
-        stream: false,
+        stream: true,
       }),
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.response) return data.response;
+    if (response.ok && response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n').filter(Boolean);
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if (data.response) {
+              fullText += data.response;
+              if (onChunk) onChunk(data.response);
+            }
+          } catch (e) {}
+        }
+      }
+      return fullText;
     }
   } catch (err) {
     console.warn('LLM fetch warning, synthesizing response from context:', err);
@@ -120,7 +135,7 @@ export async function generateEmbedding(text: string, model = 'nomic-embed-text'
   return vec;
 }
 
-export async function generateLegalResponse(prompt: string, context: string, model = 'llama3.2:1b'): Promise<string> {
+export async function generateLegalResponse(prompt: string, context: string, model = 'llama3.2:1b', onChunk?: (text: string) => void): Promise<string> {
   const systemPrompt = `You are a specialized Executive AI Legal & Policy Assistant for staff of the Saudi National Center for Environmental Compliance (NCEC).
 Your ONLY purpose is to assist staff with legal and policy matters: clause explanation, regulation suggestions, and similar-case retrieval.
 
@@ -133,11 +148,9 @@ CRITICAL FORMATTING & CONTENT RULES:
    - Use clean bullet points for requirements or steps.
 4. If the user's query is not related to legal or policy matters, or if the required answer is NOT contained in the provided vector database context below, respond ONLY with:
 "I do not have legal or policy information in the database to answer this request." (or in Arabic if the query is in Arabic: "لا تتوفر معلومات قانونية أو تنظيمية في قاعدة البيانات للإجابة على هذا الطلب.")
-5. Always respond in the same language as the user's question (Arabic or English).
+5. Always respond in the same language as the user's question (Arabic or English).`;
 
-Context Documents from Vector Database:
-${context}
-`;
+  const fullPrompt = `Context Documents from Vector Database:\n${context}\n\nUser Question:\n${prompt}`;
 
   try {
     const endpoints = getEndpoints()
@@ -148,15 +161,32 @@ ${context}
       },
       body: JSON.stringify({
         model: model,
-        prompt: prompt,
+        prompt: fullPrompt,
         system: systemPrompt,
-        stream: false,
+        stream: true,
       }),
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.response) return data.response;
+    if (response.ok && response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n').filter(Boolean);
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if (data.response) {
+              fullText += data.response;
+              if (onChunk) onChunk(data.response);
+            }
+          } catch (e) {}
+        }
+      }
+      return fullText;
     }
   } catch (err) {
     console.warn('Legal LLM warning, synthesizing response from context:', err);
