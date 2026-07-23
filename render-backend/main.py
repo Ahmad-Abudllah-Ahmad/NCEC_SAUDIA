@@ -2,16 +2,14 @@
 NCEC AI Platform — PaddleOCR Backend Server for Render
 =====================================================
 Real-time Arabic & English OCR extraction using PaddleOCR.
-RAG chat via Ollama (local model weights) + Supabase pgvector.
+RAG chat via Gemini API (0 MB local weights) + Supabase pgvector.
 """
 
-import json
 import os
 import uuid
 import tempfile
 import threading
 import traceback
-import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from rag import RAGError, ollama_status, run_rag_chat
+from rag import RAGError, gemini_embed, gemini_generate, llm_status, run_rag_chat
 
 # ── PaddleOCR initialisation ────────────────────────────────────────────
 _ocr_engine = None
@@ -50,9 +48,8 @@ app = FastAPI(title="NCEC OCR API (Render)", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    # credentials=True is incompatible with allow_origins=["*"] and breaks browser fetch
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -132,8 +129,8 @@ async def health():
         "service": "NCEC OCR Backend",
         "engine": "PaddleOCR",
         "lang": "ar",
-        "rag": "Ollama + Supabase pgvector",
-        "ollama": ollama_status(),
+        "rag": "Gemini API + Supabase pgvector",
+        "llm": llm_status(),
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
     }
 
@@ -211,14 +208,14 @@ async def get_job_status(job_id: str, page: Optional[int] = None):
 
 # ── LLM + RAG Routes ───────────────────────────────────────────────────
 class LLMGenerateRequest(BaseModel):
-    model: str = "qwen2:0.5b"
+    model: str = "gemini-2.0-flash-lite"
     prompt: str
     system: Optional[str] = None
     stream: bool = False
 
 
 class LLMEmbeddingRequest(BaseModel):
-    model: str = "nomic-embed-text"
+    model: str = "text-embedding-004"
     prompt: str
 
 
@@ -231,7 +228,7 @@ class RAGChatRequest(BaseModel):
 
 @app.post("/api/rag/chat")
 async def rag_chat(req: RAGChatRequest):
-    """RAG: Ollama embed → Supabase pgvector → extractive answer (default; no chat LLM OOM)."""
+    """Full RAG: Gemini embed → Supabase pgvector → Gemini generate (context-only)."""
     try:
         result = run_rag_chat(
             question=req.question,
@@ -248,73 +245,20 @@ async def rag_chat(req: RAGChatRequest):
 
 @app.post("/api/llm/generate")
 async def proxy_llm_generate(req: LLMGenerateRequest):
-    """Chat generate is disabled by default on Starter (OOM). Enable with USE_LLM_GENERATE=true."""
-    use_llm = os.getenv("USE_LLM_GENERATE", "false").lower() in ("1", "true", "yes")
-    if not use_llm:
-        # Safe stub so the frontend does not crash / kill the instance
-        snippet = (req.prompt or "")[:800]
-        return JSONResponse(
-            {
-                "response": (
-                    "Chat LLM generation is disabled on this server (memory limit). "
-                    "Use Document / Legal assistants — they answer from the knowledge base via embeddings.\n\n"
-                    f"Prompt excerpt:\n{snippet}"
-                ),
-                "model": "extractive-stub",
-            }
-        )
-
-    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-    ollama_url = f"{ollama_host}/api/generate"
-    payload = {"model": req.model, "prompt": req.prompt, "stream": False}
-    if req.system:
-        payload["system"] = req.system
-
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        ollama_url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=180) as resp:
-            res_data = json.loads(resp.read().decode("utf-8"))
-            if res_data and res_data.get("response"):
-                return JSONResponse(res_data)
-    except Exception as e:
-        raise HTTPException(
-            503,
-            f"Ollama unreachable at {ollama_host}. Set OLLAMA_HOST and pull: ollama pull {req.model}. Error: {e}",
-        )
-
-    raise HTTPException(503, "Ollama returned empty response")
+        text = gemini_generate(req.prompt, req.system or "", model=req.model or "gemini-2.0-flash-lite")
+        return JSONResponse({"response": text})
+    except RAGError as e:
+        raise HTTPException(503, str(e))
 
 
 @app.post("/api/llm/embeddings")
 async def proxy_llm_embeddings(req: LLMEmbeddingRequest):
-    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-    ollama_url = f"{ollama_host}/api/embeddings"
-    payload = {"model": req.model, "prompt": req.prompt}
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        ollama_url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=60) as resp:
-            res_data = json.loads(resp.read().decode("utf-8"))
-            if res_data.get("embedding"):
-                return JSONResponse(res_data)
-    except Exception as e:
-        raise HTTPException(
-            503,
-            f"Ollama embeddings unreachable at {ollama_host}. Pull: ollama pull {req.model}. Error: {e}",
-        )
-
-    raise HTTPException(503, "Ollama returned no embedding vector")
+        embedding = gemini_embed(req.prompt)
+        return JSONResponse({"embedding": embedding})
+    except RAGError as e:
+        raise HTTPException(503, str(e))
 
 
 if __name__ == "__main__":

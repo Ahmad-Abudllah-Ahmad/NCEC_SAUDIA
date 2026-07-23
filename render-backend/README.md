@@ -1,81 +1,34 @@
-# NCEC AI Platform — Render Backend (OCR + RAG with Ollama weights)
+# NCEC AI Platform — Render Backend (OCR + Gemini RAG)
 
-Production FastAPI service: **PaddleOCR** + **Ollama** (`nomic-embed-text`, `qwen2:0.5b`) + **Supabase pgvector**.
+**PaddleOCR** + **Gemini API** (`gemini-2.0-flash-lite`, `text-embedding-004`) + **Supabase pgvector**.
 
-`qwen2:0.5b` (~352 MB) is used for chat so the service fits Render memory. Embeddings stay on `nomic-embed-text` (768-d) to match the existing pgvector schema.
-
----
-
-## Files
-
-| File | Role |
-|------|------|
-| `main.py` | FastAPI — OCR, LLM proxy, `/api/rag/chat` |
-| `rag.py` | Embed → vector search → generate from context |
-| `start.sh` | Starts `ollama serve`, verifies models, then FastAPI |
-| `Dockerfile` | Installs Ollama + pulls model weights |
-| `render.yaml` | Render Blueprint |
+No local LLM weights are stored on Render (**0 MB**). Gemini runs in Google’s cloud — fits Starter plan easily.
 
 ---
 
-## Render environment variables (required)
-
-Set these in **Dashboard → Environment**:
+## Required environment variables
 
 | Key | Value |
 |-----|--------|
+| `GEMINI_API_KEY` | Free key from https://aistudio.google.com/apikey |
 | `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server only) |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` (default — in-container) |
-| `EMBED_MODEL` | `nomic-embed-text` |
-| `CHAT_MODEL` | `qwen2:0.5b` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key |
+| `CHAT_MODEL` | `gemini-2.0-flash-lite` (default) |
+| `EMBED_MODEL` | `text-embedding-004` (768-d, matches schema) |
 | `PORT` | `8100` |
-
-> **Plan:** use **Standard (2 GB RAM)** or higher. Starter (512 MB) cannot run Ollama + PaddleOCR together.
 
 ---
 
-## Deploy
-
-1. Push repo to GitHub.
-2. Render → **New Web Service** → Docker.
-3. **Root Directory:** `render-backend`
-4. **Dockerfile Path:** `./Dockerfile`
-5. Set env vars above → Deploy.
-6. First build pulls model weights (~1.5 GB) — expect 10–20 minutes.
-
-### Verify Ollama after deploy
+## Verify
 
 ```bash
 curl https://YOUR-SERVICE.onrender.com/api/health
 ```
 
-Expect:
-
-```json
-{
-  "ollama": {
-    "reachable": true,
-    "embed_ready": true,
-    "chat_ready": true,
-    "models": ["nomic-embed-text:latest", "qwen2:0.5b"]
-  },
-  "supabase_configured": true
-}
-```
+Expect `"llm.api_key_configured": true` and `"llm.local_weights_mb": 0`.
 
 ---
 
-## Frontend (Vercel)
+## Re-index note
 
-```env
-VITE_OCR_API_URL=https://YOUR-SERVICE.onrender.com
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-```
-
----
-
-## Re-index documents after switching to real embeddings
-
-If documents were uploaded while the backend used fake/hash embeddings, **re-upload them in Knowledge Base** so chunks are embedded with `nomic-embed-text`. Otherwise vector search will miss relevant passages.
+Documents uploaded before Gemini embeddings should be **re-uploaded in Knowledge Base** so chunks use `text-embedding-004` (same 768 dimensions as the DB schema).

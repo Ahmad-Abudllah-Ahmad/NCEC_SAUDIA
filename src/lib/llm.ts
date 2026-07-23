@@ -46,25 +46,16 @@ export async function ragChat(
 
   // Production / Render: use server-side RAG pipeline
   if (endpoints.ragChat) {
-    let res: Response
-    try {
-      res = await fetch(endpoints.ragChat, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question,
-          mode,
-          match_threshold: matchThreshold,
-          match_count: matchCount,
-        }),
-      })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      throw new Error(
-        `Cannot reach RAG backend at ${endpoints.ragChat}. ` +
-          `The server may be restarting or overloaded. (${msg})`,
-      )
-    }
+    const res = await fetch(endpoints.ragChat, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        mode,
+        match_threshold: matchThreshold,
+        match_count: matchCount,
+      }),
+    })
     if (!res.ok) {
       const errText = await res.text()
       throw new Error(errText || `RAG backend error (${res.status})`)
@@ -132,7 +123,7 @@ async function callGenerate(
 export async function generateResponse(
   prompt: string,
   context: string,
-  model = 'qwen2:0.5b',
+  model = 'gemini-2.0-flash-lite',
   onChunk?: (text: string) => void,
 ): Promise<string> {
   const systemPrompt = `You are a professional environmental AI assistant for the Saudi National Center for Environmental Compliance (NCEC).
@@ -144,7 +135,7 @@ Respond in the same language as the user's question.`
   return callGenerate(fullPrompt, systemPrompt, model, onChunk)
 }
 
-export async function generateEmbedding(text: string, model = 'nomic-embed-text'): Promise<number[]> {
+export async function generateEmbedding(text: string, model = 'text-embedding-004'): Promise<number[]> {
   const endpoints = getEndpoints()
   const response = await fetch(endpoints.embeddings, {
     method: 'POST',
@@ -159,7 +150,7 @@ export async function generateEmbedding(text: string, model = 'nomic-embed-text'
 
   const data = await response.json()
   if (!data?.embedding?.length) {
-    throw new Error('Embedding API returned no vector — ensure Ollama is running with nomic-embed-text pulled')
+    throw new Error('Embedding API returned no vector — ensure GEMINI_API_KEY is set on the Render backend')
   }
   return data.embedding
 }
@@ -167,7 +158,7 @@ export async function generateEmbedding(text: string, model = 'nomic-embed-text'
 export async function generateLegalResponse(
   prompt: string,
   context: string,
-  model = 'qwen2:0.5b',
+  model = 'gemini-2.0-flash-lite',
   onChunk?: (text: string) => void,
 ): Promise<string> {
   const systemPrompt = `You are a specialized Executive AI Legal & Policy Assistant for NCEC staff.
@@ -180,7 +171,7 @@ Respond in the same language as the user's question.`
   return callGenerate(fullPrompt, systemPrompt, model, onChunk)
 }
 
-export async function translateText(text: string, targetLang: 'ar' | 'en', model = 'qwen2:0.5b'): Promise<string> {
+export async function translateText(text: string, targetLang: 'ar' | 'en', model = 'gemini-2.0-flash-lite'): Promise<string> {
   const prompt = targetLang === 'ar'
     ? `Translate the following text accurately into Arabic. Preserve markdown structure. Return ONLY the translation:\n\n${text}`
     : `Translate the following text accurately into English. Preserve markdown structure. Return ONLY the translation:\n\n${text}`

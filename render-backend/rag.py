@@ -1,6 +1,6 @@
 """
-Server-side RAG pipeline: Ollama embeddings + Supabase pgvector + Ollama generation.
-Uses model weights served by the in-container Ollama daemon (see start.sh).
+Server-side RAG: Gemini API (0 MB local weights) + Supabase pgvector.
+Chat: gemini-2.0-flash-lite  |  Embed: text-embedding-004 (768-d, matches pgvector)
 """
 
 from __future__ import annotations
@@ -8,98 +8,88 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Optional
+from typing import Optional
 
-# Chat LLMs OOM on Render Starter — embeddings-only Ollama + extractive answers by default.
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "extractive")
-USE_LLM_GENERATE = os.getenv("USE_LLM_GENERATE", "false").lower() in ("1", "true", "yes")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+CHAT_MODEL = os.getenv("CHAT_MODEL", "gemini-2.0-flash-lite")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-004")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 
 class RAGError(Exception):
     pass
 
 
-def _http_json(url: str, payload: Optional[dict] = None, timeout: int = 120, method: str = "POST") -> dict:
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"} if payload is not None else {}
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def wait_for_ollama(retries: int = 8, delay: float = 1.5) -> None:
-    last_err: Optional[Exception] = None
-    for _ in range(retries):
-        try:
-            _http_json(f"{OLLAMA_HOST}/api/tags", payload=None, timeout=5, method="GET")
-            return
-        except Exception as e:
-            last_err = e
-            time.sleep(delay)
-    raise RAGError(
-        f"Ollama is not ready at {OLLAMA_HOST}. "
-        f"Ensure the container start.sh launched `ollama serve` and pulled {EMBED_MODEL} / {CHAT_MODEL}. "
-        f"Last error: {last_err}"
-    )
-
-
-def ollama_embed(text: str) -> list[float]:
-    wait_for_ollama()
-    try:
-        res = _http_json(
-            f"{OLLAMA_HOST}/api/embeddings",
-            {"model": EMBED_MODEL, "prompt": text},
-            timeout=90,
+def _require_gemini_key() -> str:
+    if not GEMINI_API_KEY:
+        raise RAGError(
+            "GEMINI_API_KEY must be set on the Render backend "
+            "(Dashboard → Environment). Get a free key at https://aistudio.google.com/apikey"
         )
-        embedding = res.get("embedding")
-        if not embedding or not isinstance(embedding, list):
-            raise RAGError(f"Ollama returned no embedding (model={EMBED_MODEL})")
-        return embedding
+    return GEMINI_API_KEY
+
+
+def _gemini_json(path: str, payload: dict, timeout: int = 90) -> dict:
+    key = _require_gemini_key()
+    url = f"{GEMINI_BASE}/{path}?key={urllib.parse.quote(key)}"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        raise RAGError(f"Embedding failed ({EMBED_MODEL}): {body}") from e
+        raise RAGError(f"Gemini API error ({e.code}): {body[:500]}") from e
     except urllib.error.URLError as e:
-        raise RAGError(
-            f"Cannot reach Ollama at {OLLAMA_HOST} for embeddings. "
-            f"Model weights must be available: ollama pull {EMBED_MODEL}. Error: {e}"
-        ) from e
+        raise RAGError(f"Cannot reach Gemini API: {e}") from e
 
 
-def ollama_generate(prompt: str, system: str, model: str = CHAT_MODEL) -> str:
-    wait_for_ollama()
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "system": system,
-        "stream": False,
-        "options": {
+def gemini_embed(text: str) -> list[float]:
+    """768-dimensional embedding via text-embedding-004 (matches document_chunks schema)."""
+    clipped = (text or "")[:8000]
+    res = _gemini_json(
+        f"models/{EMBED_MODEL}:embedContent",
+        {
+            "model": f"models/{EMBED_MODEL}",
+            "content": {"parts": [{"text": clipped}]},
+            "taskType": "RETRIEVAL_QUERY",
+        },
+        timeout=60,
+    )
+    values = (res.get("embedding") or {}).get("values")
+    if not values or not isinstance(values, list):
+        raise RAGError(f"Gemini returned no embedding (model={EMBED_MODEL})")
+    return values
+
+
+def gemini_generate(prompt: str, system: str, model: str = CHAT_MODEL) -> str:
+    payload = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
             "temperature": 0.1,
-            "num_ctx": 2048,
-            "num_predict": 512,
+            "maxOutputTokens": 1024,
         },
     }
-    try:
-        res = _http_json(f"{OLLAMA_HOST}/api/generate", payload, timeout=240)
-        text = (res.get("response") or "").strip()
-        if not text:
-            raise RAGError("Ollama returned an empty response")
-        return text
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RAGError(f"Generation failed ({model}): {body}") from e
-    except urllib.error.URLError as e:
-        raise RAGError(
-            f"Cannot reach Ollama at {OLLAMA_HOST} for generation. "
-            f"Pull model weights: ollama pull {model}. Error: {e}"
-        ) from e
+    res = _gemini_json(f"models/{model}:generateContent", payload, timeout=90)
+    candidates = res.get("candidates") or []
+    if not candidates:
+        raise RAGError("Gemini returned no candidates")
+    parts = ((candidates[0].get("content") or {}).get("parts")) or []
+    text = "".join(p.get("text", "") for p in parts).strip()
+    if not text:
+        raise RAGError("Gemini returned an empty response")
+    return text
 
 
 def supabase_rpc(fn: str, params: dict) -> list[dict]:
@@ -131,7 +121,6 @@ def supabase_rpc(fn: str, params: dict) -> list[dict]:
 
 
 def keyword_search(query: str, limit: int = 5) -> list[dict]:
-    """Fallback: full-text keyword match when vector similarity is weak."""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return []
 
@@ -193,56 +182,20 @@ CRITICAL RULES:
 4. Respond in the same language as the user's question."""
 
 
-def synthesize_extractive(question: str, chunks: list[dict], mode: str) -> str:
-    """Build an answer from retrieved chunks without loading a chat LLM (avoids OOM)."""
-    is_ar = bool(re.search(r"[\u0600-\u06FF]", question))
-    if mode == "legal":
-        heading = "## الملخص القانوني" if is_ar else "## Executive Legal Summary"
-        sub = "## المواد / البنود ذات الصلة" if is_ar else "## Applicable Excerpts"
-    else:
-        heading = "## ملخص من قاعدة المعرفة" if is_ar else "## Answer from Knowledge Base"
-        sub = "## المقاطع المسترجعة" if is_ar else "## Retrieved Passages"
-
-    intro = (
-        "تمت الإجابة من قاعدة المعرفة (بحث دلالي). المقاطع التالية هي الأكثر صلة بسؤالك:"
-        if is_ar
-        else "Answered from the knowledge base (semantic search). The passages below are most relevant to your question:"
-    )
-    parts = [heading, "", intro, "", sub]
-    for i, c in enumerate(chunks[:4], 1):
-        name = c.get("document_name", "Document")
-        text = clean_chunk(c.get("chunk_text", ""))[:1200]
-        sim = float(c.get("similarity") or 0)
-        parts.append(f"\n### {i}. {name} ({sim:.0%} match)\n\n{text}")
-    return "\n".join(parts).strip()
+def llm_status() -> dict:
+    return {
+        "provider": "gemini",
+        "api_key_configured": bool(GEMINI_API_KEY),
+        "chat_model": CHAT_MODEL,
+        "embed_model": EMBED_MODEL,
+        "local_weights_mb": 0,
+        "reachable": bool(GEMINI_API_KEY),
+    }
 
 
+# Back-compat alias used by main.py health endpoint
 def ollama_status() -> dict:
-    """Diagnostic payload for /api/health."""
-    try:
-        tags = _http_json(f"{OLLAMA_HOST}/api/tags", payload=None, timeout=5, method="GET")
-        models = [m.get("name", "") for m in tags.get("models", [])]
-        embed_ready = any(EMBED_MODEL in m for m in models)
-        chat_ready = (not USE_LLM_GENERATE) or any(CHAT_MODEL in m for m in models)
-        return {
-            "reachable": True,
-            "host": OLLAMA_HOST,
-            "models": models,
-            "embed_model": EMBED_MODEL,
-            "chat_model": CHAT_MODEL,
-            "use_llm_generate": USE_LLM_GENERATE,
-            "embed_ready": embed_ready,
-            "chat_ready": chat_ready,
-        }
-    except Exception as e:
-        return {
-            "reachable": False,
-            "host": OLLAMA_HOST,
-            "error": str(e),
-            "embed_model": EMBED_MODEL,
-            "chat_model": CHAT_MODEL,
-            "use_llm_generate": USE_LLM_GENERATE,
-        }
+    return llm_status()
 
 
 def run_rag_chat(
@@ -251,7 +204,7 @@ def run_rag_chat(
     match_threshold: float = 0.15,
     match_count: int = 5,
 ) -> dict:
-    embedding = ollama_embed(question)
+    embedding = gemini_embed(question)
 
     chunks = supabase_rpc(
         "match_document_chunks",
@@ -270,40 +223,37 @@ def run_rag_chat(
                 if k["document_name"] not in seen:
                     chunks.append(k)
 
-    engine = "extractive+nomic-embed" if not USE_LLM_GENERATE else CHAT_MODEL
-
     if not chunks:
         no_info = (
             "I do not have enough information in the provided documents to answer this question."
             if not re.search(r"[\u0600-\u06FF]", question)
             else "لا تتوفر معلومات كافية في الوثائق المتاحة للإجابة على هذا السؤال."
         )
-        return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": engine}
+        return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": CHAT_MODEL}
 
-    if USE_LLM_GENERATE:
-        context = "\n\n---\n\n".join(
-            f"Document: {c.get('document_name', 'Unknown')}\nSimilarity: {c.get('similarity', 0):.2f}\nText: {clean_chunk(c.get('chunk_text', ''))}"
-            for c in chunks
-        )
-        system = LEGAL_SYSTEM if mode == "legal" else DOCUMENT_SYSTEM
-        full_system = f"{system}\n\nContext Documents:\n{context}"
-        answer = ollama_generate(f"User Question:\n{question}", full_system)
-    else:
-        answer = synthesize_extractive(question, chunks, mode)
+    context = "\n\n---\n\n".join(
+        f"Document: {c.get('document_name', 'Unknown')}\nSimilarity: {c.get('similarity', 0):.2f}\nText: {clean_chunk(c.get('chunk_text', ''))}"
+        for c in chunks
+    )
 
-    citations = []
-    for c in chunks[:3]:
-        citations.append(
-            {
-                "document_name": c.get("document_name", "Unknown"),
-                "chunk_text": clean_chunk(c.get("chunk_text", "")),
-                "similarity": c.get("similarity", 0),
-            }
-        )
+    system = LEGAL_SYSTEM if mode == "legal" else DOCUMENT_SYSTEM
+    answer = gemini_generate(
+        prompt=f"Context Documents:\n{context}\n\nUser Question:\n{question}",
+        system=system,
+    )
+
+    citations = [
+        {
+            "document_name": c.get("document_name", "Unknown"),
+            "chunk_text": clean_chunk(c.get("chunk_text", "")),
+            "similarity": c.get("similarity", 0),
+        }
+        for c in chunks[:3]
+    ]
 
     return {
         "answer": answer,
         "citations": citations,
         "chunks_used": len(chunks),
-        "engine": engine,
+        "engine": CHAT_MODEL,
     }

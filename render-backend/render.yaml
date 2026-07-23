@@ -5,24 +5,18 @@ services:
     rootDir: render-backend
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: standard
+    plan: starter
     region: singapore
     healthCheckPath: /api/health
     envVars:
       - key: PORT
         value: 8100
-      - key: OLLAMA_HOST
-        value: http://127.0.0.1:11434
-      - key: EMBED_MODEL
-        value: nomic-embed-text
       - key: CHAT_MODEL
-        value: extractive
-      - key: USE_LLM_GENERATE
-        value: "false"
-      - key: OLLAMA_KEEP_ALIVE
-        value: 30s
-      - key: OLLAMA_NUM_PARALLEL
-        value: "1"
+        value: gemini-2.0-flash-lite
+      - key: EMBED_MODEL
+        value: text-embedding-004
+      - key: GEMINI_API_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
