@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Gavel, Bot, User, Scale, FolderSearch, Quote, Lock } from 'lucide-react'
+import { Send, Gavel, Bot, User, Scale, FolderSearch, Quote, Lock, ShieldCheck, FileText, RefreshCw } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
-import { PageHeader, Card, Badge, Button, ConfidenceRing, chartTooltip } from '../components/ui'
+import { PageHeader, Card, Badge, Button, ConfidenceRing, chartTooltip, Modal } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
+import { generateEmbedding, generateLegalResponse, translateText } from '../lib/llm'
+import { supabase } from '../lib/supabase'
 
 const similarCases = [
   { id: 'CASE-2024-118', title: 'Industrial discharge violation — Yanbu facility', ar: 'مخالفة تصريف صناعي — منشأة ينبع', similarity: 94, outcome: 'Fine + corrective plan', outcomeAr: 'غرامة + خطة تصحيحية' },
@@ -22,7 +25,71 @@ const usage7d = [
   { x: 'Wed', v: 122 }, { x: 'Thu', v: 156 }, { x: 'Fri', v: 42 }, { x: 'Sat', v: 31 },
 ]
 
-type SessionMsg = { role: 'user' | 'ai'; text: string; cite?: string }
+const mdComponents = {
+  p: ({children}: any) => <p className="mb-2 last:mb-0 leading-relaxed whitespace-pre-wrap">{children}</p>,
+  ul: ({children}: any) => <ul className="list-disc list-outside ms-4 mb-2 space-y-1">{children}</ul>,
+  ol: ({children}: any) => <ol className="list-decimal list-outside ms-4 mb-2 space-y-1">{children}</ol>,
+  li: ({children}: any) => <li>{children}</li>,
+  h1: ({children}: any) => <h1 className="font-bold text-lg mb-2 mt-3 text-slate-900">{children}</h1>,
+  h2: ({children}: any) => <h2 className="font-semibold text-base mb-2 mt-3 text-amber-900 border-b border-amber-200/40 pb-1">{children}</h2>,
+  h3: ({children}: any) => <h3 className="font-semibold text-sm mb-2 mt-2 text-slate-800">{children}</h3>,
+  strong: ({children}: any) => <strong className="font-semibold text-amber-800 bg-amber-50/80 px-1 py-0.5 rounded border border-amber-200/50">{children}</strong>,
+  em: ({children}: any) => <em className="italic text-slate-600">{children}</em>,
+  code: ({children}: any) => <code className="bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5 text-xs text-slate-800 font-mono">{children}</code>
+}
+
+const TypewriterMarkdown = ({ text, isTyping }: { text: string; isTyping?: boolean }) => {
+  const [displayed, setDisplayed] = useState(isTyping ? '' : text)
+
+  useEffect(() => {
+    if (!isTyping) {
+      setDisplayed(text)
+      return
+    }
+    
+    let i = 0
+    const timer = setInterval(() => {
+      i += 3 // Type 3 characters at a time for smooth speed
+      setDisplayed(text.slice(0, Math.min(i, text.length)))
+      if (i >= text.length) clearInterval(timer)
+    }, 15)
+    
+    return () => clearInterval(timer)
+  }, [text, isTyping])
+
+  return (
+    <div className="text-sm text-slate-700 leading-relaxed" dir="auto">
+      <ReactMarkdown components={mdComponents}>{displayed}</ReactMarkdown>
+    </div>
+  )
+}
+
+type LegalCitation = { doc: string; page: number; match: number; excerpt: string; fullText: string }
+type SessionMsg = { role: 'user' | 'ai'; text: string; citations?: LegalCitation[]; isTyping?: boolean }
+
+const extractPageNumber = (text: string): number => {
+  if (!text) return 1
+  const pageMatch = text.match(/(?:\[Page\s*(\d+)\]|Page\s*(\d+))/i)
+  if (pageMatch) {
+    const p = parseInt(pageMatch[1] || pageMatch[2], 10)
+    if (!isNaN(p) && p > 0) return p
+  }
+  return 1
+}
+
+const cleanChunk = (text: string) => {
+  if (!text) return ''
+  let cleaned = text
+    .replace(/\[Page \d+\] \d+ of \d+/gi, '')
+    .replace(/Page \d+ of \d+/gi, '')
+    .replace(/# Type.*$/gm, '')
+    .replace(/\(Clause\/Excerpt\)\s*الوهمي/gi, '')
+    .replace(/[#\-_=]{3,}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return cleaned
+}
 
 export default function LegalAssistant() {
   const { lang, t } = useLang()
@@ -32,28 +99,132 @@ export default function LegalAssistant() {
   const [input, setInput] = useState('')
   const [session, setSession] = useState<SessionMsg[]>([])
   const [typing, setTyping] = useState(false)
+  const [viewer, setViewer] = useState<LegalCitation | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+
+  const [translations, setTranslations] = useState<Record<string | number, { orig: string; trans: string; showing: 'orig' | 'trans' }>>({})
+  const [translating, setTranslating] = useState<Record<string | number, boolean>>({})
+
+  const handleTranslate = async (key: string | number, text: string) => {
+    const state = translations[key]
+    if (state) {
+      const nextShowing: 'orig' | 'trans' = state.showing === 'orig' ? 'trans' : 'orig'
+      setTranslations((prev) => ({
+        ...prev,
+        [key]: { ...state, showing: nextShowing }
+      }))
+      return
+    }
+
+    const isArabic = /[\u0600-\u06FF]/.test(text)
+    const targetLang = isArabic ? 'en' : 'ar'
+
+    setTranslating((prev) => ({ ...prev, [key]: true }))
+    try {
+      const result = await translateText(text, targetLang)
+      const newShowing: 'orig' | 'trans' = 'trans'
+      setTranslations((prev) => ({
+        ...prev,
+        [key]: { orig: text, trans: result, showing: newShowing }
+      }))
+    } catch (err) {
+      console.error('Translate error:', err)
+    } finally {
+      setTranslating((prev) => ({ ...prev, [key]: false }))
+    }
+  }
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [session, typing])
 
-  const send = () => {
+  const send = async () => {
     if (!input.trim() || !canChat) return
     const q = input.trim()
     setSession((s) => [...s, { role: 'user', text: q }])
     setInput('')
     setTyping(true)
-    setTimeout(() => {
-      setTyping(false)
+
+    try {
+      // 1. Generate query vector embedding
+      console.log('[Legal RAG] Step 1: Embedding query:', q)
+      const queryEmbedding = await generateEmbedding(q)
+
+      // 2. Perform vector search in Supabase vector DB
+      console.log('[Legal RAG] Step 2: Vector search via match_document_chunks RPC...')
+      const { data: matchedChunks, error } = await supabase.rpc('match_document_chunks', {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.2,
+        match_count: 4,
+      })
+
+      if (error) {
+        console.error('[Legal RAG] RPC error:', error)
+      }
+
+      const chunksToUse = matchedChunks || []
+      console.log('[Legal RAG] Matched chunks:', chunksToUse.length)
+
+      if (chunksToUse.length === 0) {
+        // Strict guardrail: No vector DB legal context -> refuse to answer
+        setSession((s) => [...s, {
+          role: 'ai',
+          text: isAr
+            ? 'لا تتوفر معلومات قانونية أو تنظيمية ذات صلة في قاعدة البيانات للإجابة على هذا الطلب.'
+            : 'I do not have relevant legal or policy information in the database to answer this request.',
+        }])
+        return
+      }
+
+      // 3. Prepare cleaned context strictly from vector DB chunks
+      const context = chunksToUse
+        .map((c: any) => `Document Name: ${c.document_name}\nClause Text: ${cleanChunk(c.chunk_text || '')}`)
+        .join('\n\n---\n\n')
+
+      // 4. Generate Legal AI response using strict legal prompt
+      console.log('[Legal RAG] Step 4: Calling Ollama generateLegalResponse...')
+      const response = await generateLegalResponse(q, context)
+
+      // 5. Deduplicate citations to show ONLY the top 1 single best citation
+      const uniqueDocMap = new Map<string, any>()
+      for (const c of chunksToUse) {
+        if (c.similarity > 0) {
+          if (!uniqueDocMap.has(c.document_name) || c.similarity > uniqueDocMap.get(c.document_name).similarity) {
+            uniqueDocMap.set(c.document_name, c)
+          }
+        }
+      }
+      const topChunks = Array.from(uniqueDocMap.values())
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 1)
+
+      const citations: LegalCitation[] = topChunks.map((c: any) => {
+        const rawText = c.chunk_text || ''
+        const pageNum = extractPageNumber(rawText)
+        const cleaned = cleanChunk(rawText)
+        return {
+          doc: c.document_name,
+          page: pageNum,
+          match: Math.round((c.similarity || 0) * 100),
+          excerpt: cleaned,
+          fullText: cleaned
+        }
+      })
+
+      setSession((s) => [...s, {
+        role: 'ai',
+        text: response,
+        citations: citations.length > 0 ? citations : undefined,
+        isTyping: true
+      }])
+    } catch (err: any) {
       setSession((s) => [...s, {
         role: 'ai',
         text: isAr
-          ? 'استناداً إلى نظام البيئة ولوائحه التنفيذية، إليك الرأي القانوني المدعوم بالمواد ذات الصلة والسوابق المشابهة من أرشيف المركز. القرار النهائي يبقى للفريق القانوني.'
-          : 'Based on the Environmental Law and its executive regulations, here is the legal opinion grounded in the relevant articles and similar precedents from the Center\u2019s archive. The final decision remains with the legal team.',
-        cite: isAr
-          ? 'نظام البيئة — المادة ٣٢، ص ٤١ · اللائحة التنفيذية — المادة ١٨، ص ٢٧'
-          : 'Environmental Law — Art. 32, p.41 · Executive Regulation — Art. 18, p.27',
+          ? `عذراً، حدث خطأ أثناء الاتصال بالنموذج المحلي: ${err.message}`
+          : `Sorry, an error occurred while connecting to the local model: ${err.message}`,
       }])
-    }, 1300)
+    } finally {
+      setTyping(false)
+    }
   }
 
   return (
@@ -82,7 +253,51 @@ export default function LegalAssistant() {
               <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shrink-0"><Bot size={16} /></div>
               <div className="max-w-[88%]">
                 <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-700 leading-relaxed" dir="auto">
-                  {isAr ? (
+                  <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-200/60">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Legal Assistant</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setViewer({
+                          doc: 'Executive Regulation For Controls and Procedures.pdf',
+                          page: 1,
+                          match: 94,
+                          excerpt: isAr
+                            ? 'المادة ٣٢: يحظر تصريف مياه الصرف المعالجة بدون ترخيص مسبق من المركز الوطني للرقابة على الالتزام البيئي. المادة ١٨: تضاعف عقوبات المخالفات الجسيمة عند التكرار الثالث خلال ستة أشهر مع إلزام المنشأة بتقديم خطة عمل تصحيحية عاجلة.'
+                            : 'Article 32: Discharge of treated wastewater without prior permit from the National Center for Environmental Compliance is prohibited. Article 18: Major violation penalties shall double upon the third recurrence within six months, mandating an immediate corrective action plan.',
+                          fullText: isAr
+                            ? 'المادة ٣٢: يحظر تصريف مياه الصرف المعالجة بدون ترخيص مسبق من المركز الوطني للرقابة على الالتزام البيئي. المادة ١٨: تضاعف عقوبات المخالفات الجسيمة عند التكرار الثالث خلال ستة أشهر مع إلزام المنشأة بتقديم خطة عمل تصحيحية عاجلة.'
+                            : 'Article 32: Discharge of treated wastewater without prior permit from the National Center for Environmental Compliance is prohibited. Article 18: Major violation penalties shall double upon the third recurrence within six months, mandating an immediate corrective action plan.'
+                        })}
+                        title={isAr ? 'عرض مقتطفات ومصادر الوثيقة في نافذة منبثقة' : 'View citation source passage in popup window'}
+                        className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100/80 border border-amber-200 text-[11px] font-medium text-amber-800 hover:text-amber-900 transition-all cursor-pointer shadow-2xs group"
+                      >
+                        <Quote size={11} className="text-amber-600 group-hover:scale-110 transition-transform" />
+                        <span>{isAr ? 'المصادر' : 'Citations'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTranslate('demo', isAr
+                          ? 'بموجب المادة ٣٢ من نظام البيئة والمادة ١٨ من اللائحة التنفيذية، فإن التكرار الثالث خلال ستة أشهر يستوجب: 1. تصعيد المخالفة إلى الدرجة الثانية 2. إلزام المنشأة بخطة تصحيحية 3. جواز الإيقاف الجزئي للنشاط'
+                          : 'Under Article 32 of the Environmental Law and Article 18 of the Executive Regulation, a third recurrence within six months triggers: 1. Escalation to a second-degree violation 2. Mandatory corrective action plan 3. Discretionary partial suspension')}
+                        disabled={translating['demo']}
+                        title={isAr ? 'تحويل اللغة في الوقت الفعلي (عربي / إنجليزي)' : 'Convert language in real time (EN / AR)'}
+                        className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-[11px] font-medium text-slate-600 hover:text-amber-700 transition-all cursor-pointer shadow-2xs group"
+                      >
+                        <RefreshCw size={11} className={translating['demo'] ? 'animate-spin text-amber-600' : 'text-slate-400 group-hover:text-amber-600 transition-transform group-hover:rotate-180'} />
+                        <span>
+                          {translating['demo']
+                            ? (isAr ? 'جاري التحويل...' : 'Converting...')
+                            : translations['demo']
+                              ? (translations['demo'].showing === 'trans' ? (isAr ? 'النص الأصلي' : 'Original') : (isAr ? 'ترجمة' : 'Translate'))
+                              : (isAr ? 'English' : 'عربي')}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                  {translations['demo'] && translations['demo'].showing === 'trans' ? (
+                    <ReactMarkdown components={mdComponents}>{translations['demo'].trans}</ReactMarkdown>
+                  ) : isAr ? (
                     <>
                       بموجب <span className="text-amber-700 font-semibold">المادة ٣٢ من نظام البيئة</span> والمادة ١٨ من اللائحة التنفيذية، فإن التكرار الثالث خلال ستة أشهر يستوجب:
                       <br /><br />
@@ -102,12 +317,6 @@ export default function LegalAssistant() {
                     </>
                   )}
                 </div>
-                <div className="mt-2 flex items-start gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs">
-                  <Quote size={12} className="text-amber-600 mt-0.5" />
-                  <p className="text-slate-500" dir="auto">
-                    {isAr ? 'نظام البيئة — المادة ٣٢، ص ٤١ · اللائحة التنفيذية — المادة ١٨، ص ٢٧ · سابقة CASE-2024-118' : 'Environmental Law — Art. 32, p.41 · Executive Regulation — Art. 18, p.27 · Precedent CASE-2024-118'}
-                  </p>
-                </div>
               </div>
             </div>
 
@@ -122,13 +331,50 @@ export default function LegalAssistant() {
                 <div className={`max-w-[85%] ${m.role === 'user' ? 'text-end' : ''}`}>
                   <div className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
                     m.role === 'ai' ? 'bg-slate-50 border border-slate-200 text-slate-700' : 'bg-sky-50 border border-sky-200 text-slate-800'
-                  }`} dir="auto">{m.text}</div>
-                  {m.cite && (
-                    <div className="mt-2 flex items-start gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs">
-                      <Quote size={12} className="text-amber-600 mt-0.5" />
-                      <p className="text-slate-500" dir="auto">{m.cite}</p>
-                    </div>
-                  )}
+                  }`} dir="auto">
+                    {m.role === 'ai' ? (
+                      <>
+                        <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-200/60">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Legal Assistant</span>
+                          <div className="flex items-center gap-1.5">
+                            {m.citations && m.citations.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setViewer(m.citations![0])}
+                                title={isAr ? 'عرض مقتطفات ومصادر الوثيقة في نافذة منبثقة' : 'View citation source passage in popup window'}
+                                className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100/80 border border-amber-200 text-[11px] font-medium text-amber-800 hover:text-amber-900 transition-all cursor-pointer shadow-2xs group"
+                              >
+                                <Quote size={11} className="text-amber-600 group-hover:scale-110 transition-transform" />
+                                <span>{isAr ? 'المصادر' : 'Citations'}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleTranslate(i, m.text)}
+                              disabled={translating[i]}
+                              title={isAr ? 'تحويل اللغة في الوقت الفعلي (عربي / إنجليزي)' : 'Convert language in real time (EN / AR)'}
+                              className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-[11px] font-medium text-slate-600 hover:text-amber-700 transition-all cursor-pointer shadow-2xs group"
+                            >
+                              <RefreshCw size={11} className={translating[i] ? 'animate-spin text-amber-600' : 'text-slate-400 group-hover:text-amber-600 transition-transform group-hover:rotate-180'} />
+                              <span>
+                                {translating[i]
+                                  ? (isAr ? 'جاري التحويل...' : 'Converting...')
+                                  : translations[i]
+                                    ? (translations[i].showing === 'trans' ? (isAr ? 'النص الأصلي' : 'Original') : (isAr ? 'ترجمة' : 'Translate'))
+                                    : (/[\u0600-\u06FF]/.test(m.text) ? 'English' : 'عربي')}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                        <TypewriterMarkdown
+                          text={translations[i] ? (translations[i].showing === 'trans' ? translations[i].trans : translations[i].orig) : m.text}
+                          isTyping={m.isTyping && !translations[i]}
+                        />
+                      </>
+                    ) : (
+                      m.text
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -210,6 +456,54 @@ export default function LegalAssistant() {
 
         </div>
       </div>
+
+      {/* Citation source viewer Popup Modal */}
+      <Modal
+        open={viewer !== null}
+        onClose={() => setViewer(null)}
+        title={viewer?.doc}
+        subtitle={isAr ? 'تفاصيل الاقتباس والمصدر المسترجع' : 'Retrieved Source & Citation Details'}
+        maxW="max-w-2xl"
+      >
+        {viewer && (
+          <div>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <Badge tone="emerald"><ShieldCheck size={10} /> {isAr ? 'مصدر موثق' : 'Verified Source'}</Badge>
+              <Badge tone="sky">{isAr ? 'مفهرس — قاعدة المعرفة' : 'Indexed — Vector DB'}</Badge>
+              <Badge tone="slate">{isAr ? 'صفحة' : 'Page'} {viewer.page || 1}</Badge>
+              <Badge tone="amber">{viewer.match}% {isAr ? 'تطابق دلالي' : 'Semantic Match'}</Badge>
+            </div>
+
+            {/* Document passage content */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-5 shadow-inner" dir="auto">
+              <div className="rounded-lg bg-white border border-amber-200/80 p-4 shadow-2xs">
+                <p className="text-xs font-semibold text-amber-900 mb-2 flex items-center gap-1.5 border-b border-amber-100 pb-2">
+                  <Quote size={14} className="text-amber-600" />
+                  {isAr ? 'النص المقتبس المسترجع من الوثيقة:' : 'Retrieved Citation Passage:'}
+                </p>
+                <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap">
+                  "{viewer.fullText || viewer.excerpt}"
+                </p>
+              </div>
+            </div>
+
+            {/* Bottom info bar showing Document Name and Page as required */}
+            <div className="mt-4 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+              <div className="flex items-center gap-2 text-slate-700 font-medium">
+                <FileText size={14} className="text-amber-600 shrink-0" />
+                <span className="truncate max-w-xs">{viewer.doc}</span>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+                  {isAr ? 'صفحة' : 'Page'} {viewer.page || 1}
+                </span>
+              </div>
+              <Button size="sm" onClick={() => setViewer(null)}>
+                {isAr ? 'إغلاق' : 'Close'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

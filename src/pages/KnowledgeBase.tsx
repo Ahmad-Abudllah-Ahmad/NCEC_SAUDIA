@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import {
   UploadCloud, FileText, FileSpreadsheet, File, Filter, Tags,
-  History, Link2, Network, CheckCircle2, Loader2, FolderTree,
+  Network, CheckCircle2, Loader2, FolderTree,
 } from 'lucide-react'
-import { PageHeader, Card, Badge, Button, ProgressBar, KpiCard } from '../components/ui'
+import { PageHeader, Card, Badge, Button, ProgressBar, KpiCard, Modal } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
+import { extractPdfText } from '../utils/pdfExtractor'
+import { globalStore, useGlobalDocuments } from '../store'
 
 const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
 
@@ -24,7 +26,7 @@ const categories = [
 type Doc = {
   name: string; nameEn: string; type: string; cat: string; lang: string
   pages: number; ver: string; versions: number; status: 'indexed' | 'processing' | 'ocr'
-  tags: string[]; updated: string; linked: number; pct?: number
+  tags: string[]; updated: string; linked: number; pct?: number; content?: string
 }
 
 const initialDocs: Doc[] = [
@@ -41,21 +43,101 @@ const initialDocs: Doc[] = [
 const typeIcon = (t: string) => t === 'XLSX' ? FileSpreadsheet : t === 'DOCX' ? File : FileText
 const typeColor = (t: string) => t === 'XLSX' ? 'text-emerald-600' : t === 'DOCX' ? 'text-sky-600' : 'text-rose-500'
 
+const getTags = (tags: any, cat?: string) => {
+  if (Array.isArray(tags) && tags.length > 0) return tags
+  if (typeof tags === 'string' && tags.trim().length > 0) return tags.split(',').map((t) => t.trim()).filter(Boolean)
+  if (cat) return [cat]
+  return ['General']
+}
+
 export default function KnowledgeBase() {
   const { lang, t } = useLang()
   const { role } = useRole()
   const isAr = lang === 'ar'
   const [cat, setCat] = useState('All')
   const [docList, setDocList] = useState<Doc[]>(initialDocs)
-  const filtered = cat === 'All' ? docList : docList.filter((d) => d.cat === cat)
+  const globalDocs = useGlobalDocuments()
+  
+  const combinedDocs = useMemo(() => {
+    const dbDocs: Doc[] = globalDocs.map(d => ({
+      name: d.name,
+      nameEn: '',
+      type: 'PDF',
+      cat: d.category || 'Policies',
+      lang: isAr ? 'AR' : 'EN',
+      pages: Math.max(1, Math.ceil((d.content?.length || 100) / 1000)),
+      ver: 'v1.0',
+      versions: 1,
+      status: 'indexed',
+      tags: d.tags || [],
+      updated: 'now',
+      linked: 0,
+      content: d.content
+    }))
+
+    const dbNames = new Set(dbDocs.map(d => d.name))
+    const uniqueLocal = docList.filter(d => !dbNames.has(d.name))
+    
+    return [...dbDocs, ...uniqueLocal]
+  }, [globalDocs, docList, isAr])
+
+  const filtered = cat === 'All' ? combinedDocs : combinedDocs.filter((d) => d.cat === cat)
   const canUpload = role.perms.upload
 
-  const upload = () => {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [extractedData, setExtractedData] = useState<string | null>(null)
+  const [isExtracting, setIsExtracting] = useState(false)
+  
+  // Tagging State
+  const [taggingFile, setTaggingFile] = useState<{ file: File, text: string } | null>(null)
+  const [draftCat, setDraftCat] = useState('Policies')
+  const [draftTags, setDraftTags] = useState('')
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsExtracting(true)
+    try {
+      if (file.type === 'application/pdf') {
+        const text = await extractPdfText(file)
+        setExtractedData(text)
+        setTaggingFile({ file, text })
+      } else {
+        setExtractedData(`File uploaded: ${file.name}. \nNote: Content extraction is optimized for PDF files.`)
+        // Fallback for non-pdf
+        uploadMock(file.name)
+      }
+    } catch (err) {
+      console.error(err)
+      setExtractedData('Error extracting text from document.')
+    } finally {
+      setIsExtracting(false)
+    }
+  }
+
+  const handleSaveDocument = () => {
+    if (!taggingFile) return
+    const tagsArray = draftTags.split(',').map(t => t.trim()).filter(Boolean)
+    
+    globalStore.addDocument({
+      name: taggingFile.file.name,
+      content: taggingFile.text,
+      category: draftCat,
+      tags: tagsArray
+    })
+    
+    uploadMock(taggingFile.file.name, draftCat, tagsArray)
+    setTaggingFile(null)
+    setDraftCat('Policies')
+    setDraftTags('')
+  }
+
+  const uploadMock = (uploadedName?: string, cat?: string, tags?: string[]) => {
     if (!canUpload) return
-    const name = isAr ? `وثيقة جديدة — ${new Date().toLocaleTimeString()}` : `New Document — ${new Date().toLocaleTimeString()}`
+    const name = uploadedName || (isAr ? `وثيقة جديدة — ${new Date().toLocaleTimeString()}` : `New Document — ${new Date().toLocaleTimeString()}`)
     const doc: Doc = {
-      name, nameEn: '', type: 'PDF', cat: 'Policies', lang: 'AR', pages: 96, ver: 'v1.0',
-      versions: 1, status: 'processing', tags: [isAr ? 'جديد' : 'new'], updated: 'now', linked: 0, pct: 12,
+      name, nameEn: '', type: 'PDF', cat: cat || 'Policies', lang: 'AR', pages: 96, ver: 'v1.0',
+      versions: 1, status: 'processing', tags: tags && tags.length > 0 ? tags : (isAr ? ['جديد'] : ['new']), updated: 'now', linked: 0, pct: 12,
     }
     setCat('All')
     setDocList((l) => [doc, ...l])
@@ -73,9 +155,11 @@ export default function KnowledgeBase() {
         actions={
           <>
             <Button variant="outline" size="sm"><Filter size={14} /> {isAr ? 'تصفية' : 'Filters'}</Button>
-            <Button size="sm" onClick={upload} disabled={!canUpload} title={canUpload ? undefined : t('requiresPermission')}>
-              <UploadCloud size={15} /> {isAr ? 'رفع وثائق' : 'Upload Documents'}
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={!canUpload || isExtracting} title={canUpload ? undefined : t('requiresPermission')}>
+              {isExtracting ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />}
+              {isAr ? 'رفع وثائق' : 'Upload Documents'}
             </Button>
+            <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.doc,.docx,.xls,.xlsx" />
           </>
         }
       />
@@ -93,11 +177,11 @@ export default function KnowledgeBase() {
 
       {/* Upload zone */}
       <button
-        onClick={upload}
-        disabled={!canUpload}
+        onClick={() => fileInputRef.current?.click()}
+        disabled={!canUpload || isExtracting}
         title={canUpload ? undefined : t('requiresPermission')}
         className={`card w-full border-dashed border-2 border-slate-300 transition-colors p-6 mb-5 text-center group ${
-          canUpload ? 'hover:border-brand-600/60 cursor-pointer' : 'opacity-50 cursor-not-allowed'
+          canUpload && !isExtracting ? 'hover:border-brand-600/60 cursor-pointer' : 'opacity-50 cursor-not-allowed'
         }`}
       >
         <UploadCloud size={28} className="mx-auto text-slate-400 group-hover:text-brand-600 transition-colors" />
@@ -135,7 +219,14 @@ export default function KnowledgeBase() {
           {filtered.map((d) => {
             const Icon = typeIcon(d.type)
             return (
-              <div key={d.name} className="card card-hover p-4 flex flex-wrap items-center gap-4">
+              <div 
+                key={d.name} 
+                className="card card-hover p-4 flex flex-wrap items-center gap-4 cursor-pointer"
+                onClick={() => {
+                  if (d.content) setExtractedData(d.content)
+                  else setExtractedData(isAr ? 'لا يوجد نص مستخرج لهذه الوثيقة (وثيقة تجريبية).' : 'No extracted text available for this document (mock document).')
+                }}
+              >
                 <div className={`p-2.5 rounded-lg bg-slate-50 border border-slate-200 ${typeColor(d.type)}`}>
                   <Icon size={20} />
                 </div>
@@ -143,21 +234,15 @@ export default function KnowledgeBase() {
                   <p className="text-sm font-semibold text-slate-900 leading-snug" dir="auto">{d.name}</p>
                   {d.nameEn && <p className="text-[11px] text-slate-400">{d.nameEn}</p>}
                   <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                    {d.tags.map((tag) => <Badge key={tag} tone="slate">#{tag}</Badge>)}
+                    {getTags(d.tags, d.cat).map((tag: string) => (
+                      <Badge key={tag} tone="slate">#{tag}</Badge>
+                    ))}
                   </div>
                 </div>
                 <div className="flex items-center gap-5 text-xs text-slate-500">
                   <div className="text-center">
                     <p className="font-semibold text-slate-700">{d.pages.toLocaleString()}</p>
                     <p className="text-[10px] text-slate-400">{isAr ? 'صفحات' : 'pages'}</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="font-semibold text-slate-700 flex items-center gap-1"><History size={11} /> {d.ver}</p>
-                    <p className="text-[10px] text-slate-400">{d.versions} {isAr ? 'إصدارات' : 'versions'}</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="font-semibold text-slate-700 flex items-center gap-1"><Link2 size={11} /> {d.linked}</p>
-                    <p className="text-[10px] text-slate-400">{isAr ? 'مرتبطة' : 'linked'}</p>
                   </div>
                   <Badge tone="sky">{d.lang}</Badge>
                   {d.status === 'indexed' && <Badge tone="emerald"><CheckCircle2 size={11} /> {isAr ? 'مفهرس' : 'Indexed'}</Badge>}
@@ -172,6 +257,60 @@ export default function KnowledgeBase() {
           })}
         </div>
       </div>
+
+      <Modal
+        open={!!extractedData}
+        onClose={() => setExtractedData(null)}
+        title={isAr ? 'البيانات المستخرجة' : 'Extracted Data'}
+        subtitle={isAr ? 'البيانات النصية المستخرجة من المستند المرفوع' : 'Text data extracted from the uploaded document'}
+      >
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-96 overflow-y-auto whitespace-pre-wrap text-xs text-slate-700">
+          {extractedData}
+        </div>
+        <div className="mt-6 flex justify-end">
+          <Button onClick={() => setExtractedData(null)}>{isAr ? 'إغلاق' : 'Close'}</Button>
+        </div>
+      </Modal>
+
+      {/* Manual Tagging Modal */}
+      <Modal
+        open={taggingFile !== null}
+        onClose={() => setTaggingFile(null)}
+        title={isAr ? 'تصنيف وإضافة وسوم للوثيقة' : 'Categorize & Tag Document'}
+        subtitle={taggingFile?.file.name}
+        maxW="max-w-md"
+      >
+        <div className="space-y-4 my-2">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{isAr ? 'الفئة' : 'Category'}</label>
+            <select 
+              value={draftCat} 
+              onChange={(e) => setDraftCat(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none"
+              dir="auto"
+            >
+              {categories.filter(c => c.key !== 'All').map(c => (
+                <option key={c.key} value={c.key}>{isAr ? c.ar : c.key}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">{isAr ? 'الوسوم (مفصولة بفاصلة)' : 'Tags (comma separated)'}</label>
+            <input 
+              type="text" 
+              placeholder={isAr ? 'مثال: تقرير, 2026, عاجل' : 'e.g. report, 2026, urgent'}
+              value={draftTags}
+              onChange={(e) => setDraftTags(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none"
+              dir="auto"
+            />
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setTaggingFile(null)}>{isAr ? 'إلغاء' : 'Cancel'}</Button>
+          <Button onClick={handleSaveDocument}>{isAr ? 'حفظ الوثيقة' : 'Save Document'}</Button>
+        </div>
+      </Modal>
     </div>
   )
 }

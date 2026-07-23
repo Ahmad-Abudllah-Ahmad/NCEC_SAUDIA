@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: ncec-ocr-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: singapore
+    envVars:
+      - key: PORT
+        value: 8100

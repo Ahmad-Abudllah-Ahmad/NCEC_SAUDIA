@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   Leaf, UploadCloud, AlertTriangle, CheckCircle2, XCircle, FileWarning,
-  FileCheck2, Download, Scale, ListChecks, Gauge,
+  FileCheck2, Download, Scale, ListChecks, Gauge, Loader2
 } from 'lucide-react'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
-import { PageHeader, Card, Badge, Button, ProgressBar, ConfidenceRing, KpiCard, chartTooltip } from '../components/ui'
+import { PageHeader, Card, Badge, Button, ProgressBar, ConfidenceRing, KpiCard, chartTooltip, Modal } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
 import { downloadWord, downloadPdf } from '../utils/docExport'
+import { extractPdfText } from '../utils/pdfExtractor'
+import { globalStore } from '../store'
+
 
 const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
 
@@ -57,14 +60,40 @@ export default function EnvStudies() {
   const [toast, setToast] = useState<string | null>(null)
   const canUpload = role.perms.upload
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [extractedData, setExtractedData] = useState<string | null>(null)
+  const [isExtracting, setIsExtracting] = useState(false)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsExtracting(true)
+    try {
+      if (file.type === 'application/pdf') {
+        const text = await extractPdfText(file)
+        setExtractedData(text)
+        globalStore.addDocument({ name: file.name, content: text })
+      } else {
+        setExtractedData(`File uploaded: ${file.name}. \nNote: Content extraction is optimized for PDF files.`)
+      }
+      uploadStudy(file.name)
+    } catch (err) {
+      console.error(err)
+      setExtractedData('Error extracting text from document.')
+    } finally {
+      setIsExtracting(false)
+    }
+  }
+
   const notify = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(null), 2500)
   }
 
-  const uploadStudy = () => {
+  const uploadStudy = (uploadedName?: string) => {
     if (!canUpload) return
-    setPipeline((p) => [...p, { name: isAr ? 'دراسة جديدة — بانتظار التحليل' : 'New EIA Upload — Pending Analysis', pages: 524, status: 'queued', rec: null }])
+    const name = uploadedName || (isAr ? 'دراسة جديدة — بانتظار التحليل' : 'New EIA Upload — Pending Analysis')
+    setPipeline((p) => [...p, { name, pages: 524, status: 'queued', rec: null }])
     notify(isAr ? 'تمت إضافة الدراسة إلى قائمة التحليل' : 'Study added to analysis queue')
   }
 
@@ -97,9 +126,11 @@ export default function EnvStudies() {
           <>
             {toast && <Badge tone="emerald"><CheckCircle2 size={11} /> {toast}</Badge>}
             <Button variant="outline" size="sm" onClick={() => notify(isAr ? 'تم تنزيل تقرير المراجعة' : 'Review report downloaded')}><Download size={14} /> {isAr ? 'تقرير المراجعة' : 'Review Report'}</Button>
-            <Button size="sm" onClick={uploadStudy} disabled={!canUpload} title={canUpload ? undefined : t('requiresPermission')}>
-              <UploadCloud size={14} /> {isAr ? 'رفع دراسة' : 'Upload Study'}
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={!canUpload || isExtracting} title={canUpload ? undefined : t('requiresPermission')}>
+              {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
+              {isAr ? 'رفع دراسة' : 'Upload Study'}
             </Button>
+            <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.doc,.docx" />
           </>
         }
       />
@@ -210,6 +241,20 @@ export default function EnvStudies() {
           ))}
         </div>
       </Card>
+
+      <Modal
+        open={!!extractedData}
+        onClose={() => setExtractedData(null)}
+        title={isAr ? 'البيانات المستخرجة' : 'Extracted Data'}
+        subtitle={isAr ? 'البيانات النصية المستخرجة من المستند المرفوع' : 'Text data extracted from the uploaded document'}
+      >
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-96 overflow-y-auto whitespace-pre-wrap text-xs text-slate-700">
+          {extractedData}
+        </div>
+        <div className="flex justify-end mt-4">
+          <Button onClick={() => setExtractedData(null)}>{isAr ? 'إغلاق' : 'Close'}</Button>
+        </div>
+      </Modal>
     </div>
   )
 }

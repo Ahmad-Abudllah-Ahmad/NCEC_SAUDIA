@@ -635,7 +635,7 @@ export default function OCRPage() {
     rawFileRef.current = null
     setIsModalOpen(true)
 
-    // ── Optional PaddleOCR backend (run server/start.sh on port 8100) ──
+    // ── Optional PaddleOCR backend (run render-backend/main.py on port 8100 or deployed on Render) ──
     const useOcrBackend = import.meta.env.VITE_USE_OCR_BACKEND === 'true'
     let backendHandling = false
     if (uploadFile) {

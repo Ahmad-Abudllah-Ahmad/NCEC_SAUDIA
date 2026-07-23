@@ -1,14 +1,17 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
-  UploadCloud, FileSpreadsheet, TrendingUp, AlertCircle, MessageSquare, Send,
+  UploadCloud, FileSpreadsheet, TrendingUp, AlertCircle, MessageSquare, Send, Loader2
 } from 'lucide-react'
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from 'recharts'
-import { PageHeader, Card, Badge, Button, KpiCard, chartTooltip } from '../components/ui'
+import { PageHeader, Card, Badge, Button, KpiCard, chartTooltip, Modal } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
+import { extractPdfText } from '../utils/pdfExtractor'
+import { globalStore } from '../store'
+
 
 const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
 
@@ -58,6 +61,31 @@ export default function DataAnalysis() {
   const [question, setQuestion] = useState('')
   const [qas, setQas] = useState<QA[]>([])
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [extractedData, setExtractedData] = useState<string | null>(null)
+  const [isExtracting, setIsExtracting] = useState(false)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsExtracting(true)
+    try {
+      if (file.type === 'application/pdf') {
+        const text = await extractPdfText(file)
+        setExtractedData(text)
+        globalStore.addDocument({ name: file.name, content: text })
+      } else {
+        setExtractedData(`File uploaded: ${file.name}. \nNote: Content extraction is optimized for PDF files.`)
+      }
+      uploadMock(file.name)
+    } catch (err) {
+      console.error(err)
+      setExtractedData('Error extracting text from document.')
+    } finally {
+      setIsExtracting(false)
+    }
+  }
+
   const initialQA: QA = {
     q: isAr ? 'أي المحطات تجاوزت حد PM10 أكثر من ٥ مرات في مايو؟' : 'Which stations exceeded the PM10 limit more than 5 times in May?',
     a: isAr
@@ -65,9 +93,9 @@ export default function DataAnalysis() {
       : 'Two stations: Jubail ST-04 (9 exceedances) and Dammam ST-07 (7). Both are in industrial zones, averaging 34% above the limit.',
   }
 
-  const upload = () => {
+  const uploadMock = (uploadedName?: string) => {
     if (!canUpload) return
-    const name = `Upload_${new Date().toLocaleTimeString().replace(/:/g, '')}.xlsx`
+    const name = uploadedName || `Upload_${new Date().toLocaleTimeString().replace(/:/g, '')}.xlsx`
     setDatasets((d) => [{ name, rows: '—', status: 'analyzing' }, ...d])
     setTimeout(() => setDatasets((d) => d.map((x) => (x.name === name ? { ...x, rows: '12,844', status: 'analyzed' } : x))), 2200)
   }
@@ -92,9 +120,13 @@ export default function DataAnalysis() {
           ? 'ارفع ملفات Excel و CSV والتقارير — الذكاء يحلل ويرسم ويكشف الشذوذ ويتنبأ ويجيب عن الأسئلة'
           : 'Upload Excel, CSV and reports — AI analyzes, charts, detects anomalies, forecasts, and answers questions about your datasets'}
         actions={
-          <Button size="sm" onClick={upload} disabled={!canUpload} title={canUpload ? undefined : t('requiresPermission')}>
-            <UploadCloud size={14} /> {isAr ? 'رفع بيانات' : 'Upload Data'}
-          </Button>
+          <>
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={!canUpload || isExtracting} title={canUpload ? undefined : t('requiresPermission')}>
+              {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
+              {isAr ? 'رفع بيانات' : 'Upload Data'}
+            </Button>
+            <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.csv,.xlsx,.xls" />
+          </>
         }
       />
 
@@ -198,6 +230,20 @@ export default function DataAnalysis() {
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={!!extractedData}
+        onClose={() => setExtractedData(null)}
+        title={isAr ? 'البيانات المستخرجة' : 'Extracted Data'}
+        subtitle={isAr ? 'البيانات النصية المستخرجة من المستند المرفوع' : 'Text data extracted from the uploaded document'}
+      >
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-96 overflow-y-auto whitespace-pre-wrap text-xs text-slate-700">
+          {extractedData}
+        </div>
+        <div className="flex justify-end mt-4">
+          <Button onClick={() => setExtractedData(null)}>{isAr ? 'إغلاق' : 'Close'}</Button>
+        </div>
+      </Modal>
     </div>
   )
 }

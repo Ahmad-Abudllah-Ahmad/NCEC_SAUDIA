@@ -1,65 +1,68 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   Send, Bot, User, FileText, BookOpen, Quote, Sparkles, Paperclip,
-  Languages, Brain, ChevronRight, CheckCheck, Lock, ExternalLink, ShieldCheck,
+  Languages, Brain, CheckCheck, Lock, ShieldCheck, RefreshCw
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis } from 'recharts'
 import { PageHeader, Card, Badge, Button, Modal, chartTooltip } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
+import { useGlobalDocuments } from '../store'
+import { generateResponse, generateEmbedding, translateText } from '../lib/llm'
+import { supabase } from '../lib/supabase'
 
 type Citation = { doc: string; page: number; excerpt: string }
 
-const citationBody: Record<string, { ar: string[]; en: string[] }> = {
-  'اللائحة التنفيذية لنظام البيئة — الإصدار الرابع': {
-    ar: [
-      'تحدد اللائحة التنفيذية المتطلبات النظامية للأنشطة والمنشآت الخاضعة لإشراف المركز، مع بيان الإجراءات المرتبطة بإصدار التصاريح البيئية وتجديدها والرقابة على الالتزام بشروطها.',
-      'وتنص الأحكام ذات الصلة على أن منشآت الفئة الأولى مطالبة بتقديم دراسة تقييم أثر بيئي مكتملة قبل إصدار التصريح، على أن تشمل الدراسة خطة الإدارة البيئية وبرنامج الرصد الذاتي وخطة الاستجابة للطوارئ.',
-      'كما توضح اللائحة أن الجهة المختصة تراجع مدى اكتمال الملف والالتزام بالمتطلبات الفنية والنظامية قبل الانتقال إلى مرحلة التقييم النهائي وإصدار القرار المناسب.',
-    ],
-    en: [
-      'The Executive Regulation defines the regulatory requirements for activities and facilities under the Center’s supervision, including the procedures for issuing, renewing, and monitoring environmental permits.',
-      'The relevant provisions state that Category 1 facilities must submit a complete Environmental Impact Assessment prior to permit issuance, including the environmental management plan, self-monitoring program, and emergency response plan.',
-      'The Regulation also clarifies that the competent authority reviews file completeness and technical and regulatory compliance before moving to final assessment and issuance of the appropriate decision.',
-    ],
-  },
-  'دليل التصاريح البيئية للمنشآت': {
-    ar: [
-      'يوضح الدليل التصنيفات المعتمدة للأنشطة والمنشآت البيئية، ومتطلبات كل فئة، والوثائق الداعمة الواجب تقديمها ضمن ملف الطلب.',
-      'ويعرض جداول مقارنة بين الفئات المختلفة مع تحديد الفروقات في نوع الدراسة المطلوبة، ومدد المراجعة، ومتطلبات الرصد، والاشتراطات المرتبطة بالمخاطر التشغيلية.',
-      'كما يتضمن الدليل توجيهات عملية لمقدمي الطلبات حول كيفية استكمال النماذج والرفع عبر القنوات المعتمدة وتفادي أسباب التأخير أو الإرجاع.',
-    ],
-    en: [
-      'The permit guide explains the approved classifications for environmental activities and facilities and the supporting documents required for each application category.',
-      'It includes comparison tables between permit categories, highlighting differences in study type, review timelines, monitoring obligations, and risk-related operational requirements.',
-      'The guide also provides practical instructions for applicants on how to complete forms, submit through approved channels, and avoid common causes of delay or return.',
-    ],
-  },
-  'تعميم رقم 45/2026': {
-    ar: [
-      'يتضمن التعميم تحديثاً إجرائياً على مدد دراسة طلبات التصاريح البيئية وآلية احتساب المدد من تاريخ اكتمال المستندات النظامية والفنية المطلوبة من مقدم الطلب.',
-      'ويؤكد النص أن الحد الزمني القياسي لدراسة الطلبات المستوفية قد تم تحديثه ليصبح 60 يوم عمل، مع إمكان طلب استكمالات إضافية متى استدعت الحاجة الفنية أو النظامية ذلك.',
-      'كما ينص التعميم على ضرورة إشعار مقدم الطلب بأي نواقص أو متطلبات إضافية خلال مدة محددة، وأن احتساب المدة يستأنف بعد استلام جميع المستندات المكملة واعتمادها من الجهة المختصة.',
-    ],
-    en: [
-      'The circular introduces a procedural update to environmental permit review timelines and clarifies how timelines are calculated from the date on which the required regulatory and technical documents are deemed complete.',
-      'It confirms that the standard review period for complete applications has been updated to 60 business days, while allowing the competent authority to request additional completions whenever technical or regulatory review requires them.',
-      'The circular also requires applicants to be notified of deficiencies or additional requests within the specified notice period, after which the review clock resumes once all supplemental documents are received and accepted.',
-    ],
-  },
-  'Executive Regulation of Environmental Law': {
-    ar: [
-      'توضح اللائحة التنفيذية لنظام البيئة الترتيب التنظيمي لمتطلبات التصاريح والتصنيفات البيئية، وتربط كل فئة بنوع الدراسة والضوابط الواجبة التطبيق.',
-      'كما تنص المواد المرجعية على حالات التبسيط أو التدرج في المتطلبات بحسب حجم الأثر البيئي المتوقع وطبيعة النشاط وموقعه الحساس بيئياً.',
-      'وتبقى مراجعة الاكتمال والامتثال والاشتراطات الفنية شرطاً أساسياً قبل الانتقال إلى أي قرار ترخيص أو طلب استكمال أو تعديل.',
-    ],
-    en: [
-      'The Executive Regulation sets out the regulatory structure for environmental permitting requirements and links each facility category to its required study type and applicable controls.',
-      'The cited articles describe cases where requirements may be simplified or scaled according to expected environmental impact, activity type, and environmental sensitivity of the site.',
-      'Completeness, compliance, and technical-condition review remain essential prerequisites before any licensing, completion request, or revision decision proceeds.',
-    ],
-  },
+
+
+const extractPageNumber = (text: string): number => {
+  if (!text) return 1
+  const pageMatch = text.match(/(?:\[Page\s*(\d+)\]|Page\s*(\d+))/i)
+  if (pageMatch) {
+    const p = parseInt(pageMatch[1] || pageMatch[2], 10)
+    if (!isNaN(p) && p > 0) return p
+  }
+  return 1
+}
+
+const mdComponents = {
+  p: ({children}: any) => <p className="mb-2 last:mb-0 leading-relaxed whitespace-pre-wrap">{children}</p>,
+  ul: ({children}: any) => <ul className="list-disc list-outside ms-4 mb-2 space-y-1">{children}</ul>,
+  ol: ({children}: any) => <ol className="list-decimal list-outside ms-4 mb-2 space-y-1">{children}</ol>,
+  li: ({children}: any) => <li>{children}</li>,
+  h1: ({children}: any) => <h1 className="font-bold text-lg mb-2 mt-3 text-slate-900">{children}</h1>,
+  h2: ({children}: any) => <h2 className="font-semibold text-base mb-2 mt-3 text-amber-900 border-b border-amber-200/40 pb-1">{children}</h2>,
+  h3: ({children}: any) => <h3 className="font-semibold text-sm mb-2 mt-2 text-slate-800">{children}</h3>,
+  strong: ({children}: any) => <strong className="font-semibold text-amber-800 bg-amber-50/80 px-1 py-0.5 rounded border border-amber-200/50">{children}</strong>,
+  em: ({children}: any) => <em className="italic text-slate-600">{children}</em>,
+  code: ({children}: any) => <code className="bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5 text-xs text-slate-800 font-mono">{children}</code>
+}
+
+const TypewriterMarkdown = ({ text, isTyping }: { text: string; isTyping?: boolean }) => {
+  const [displayed, setDisplayed] = useState(isTyping ? '' : text)
+
+  useEffect(() => {
+    if (!isTyping) {
+      setDisplayed(text)
+      return
+    }
+    
+    let i = 0
+    const timer = setInterval(() => {
+      i += 3 // Type 3 characters at a time for smooth speed
+      setDisplayed(text.slice(0, Math.min(i, text.length)))
+      if (i >= text.length) clearInterval(timer)
+    }, 15)
+    
+    return () => clearInterval(timer)
+  }, [text, isTyping])
+
+  return (
+    <div className="text-sm text-slate-700" dir="auto">
+      <ReactMarkdown components={mdComponents}>{displayed}</ReactMarkdown>
+    </div>
+  )
 }
 
 type Msg = {
@@ -67,6 +70,7 @@ type Msg = {
   text: string
   citations?: Citation[]
   confidence?: number
+  isTyping?: boolean
 }
 
 const initialMsgs: Msg[] = [
@@ -78,11 +82,8 @@ const initialMsgs: Msg[] = [
     role: 'ai',
     text: 'وفقاً للائحة التنفيذية لنظام البيئة، تتطلب المنشآت الصناعية من الفئة الأولى (الأنشطة ذات الأثر البيئي المرتفع) ما يلي:\n\n1. تقديم دراسة تقييم الأثر البيئي (EIA) كاملة معدّة من جهة استشارية مؤهلة\n2. خطة إدارة بيئية تشمل برنامج الرصد الذاتي\n3. تحديد التقنيات المتاحة الأفضل (BAT) لمعالجة الانبعاثات\n4. خطة الطوارئ البيئية والاستجابة للحوادث\n\nمدة دراسة الطلب: 60 يوم عمل من اكتمال المستندات.',
     citations: [
-      { doc: 'اللائحة التنفيذية لنظام البيئة — الإصدار الرابع', page: 47, excerpt: 'المادة 14: تلتزم منشآت الفئة الأولى بتقديم دراسة تقييم الأثر البيئي...' },
-      { doc: 'دليل التصاريح البيئية للمنشآت', page: 12, excerpt: 'تصنف الأنشطة الصناعية وفق ثلاث فئات بحسب حجم الأثر البيئي المتوقع...' },
-      { doc: 'تعميم رقم 45/2026', page: 3, excerpt: 'تحديث مدد دراسة طلبات التصاريح لتصبح 60 يوم عمل...' },
+      { doc: 'اللائحة التنفيذية لنظام البيئة — الإصدار الرابع', page: 47, excerpt: 'المادة 14: تلتزم جميع منشآت الفئة الأولى ذات الأثر البيئي المرتفع بتقديم دراسة تقييم الأثر البيئي (EIA) متكاملة ومعدة بواسطة مكاتب استشارية معتمدة، على أن تشتمل على خطة إدارة بيئية شاملة، وبرنامج محدد للرصد الذاتي الدوري، بالإضافة إلى خطة الطوارئ البيئية والاستجابة السريعة للحوادث وفقاً للاشتراطات المعتمدة لدى المركز الوطني للرقابة على الالتزام البيئي.' },
     ],
-    confidence: 96,
   },
   {
     role: 'user',
@@ -92,10 +93,8 @@ const initialMsgs: Msg[] = [
     role: 'ai',
     text: 'Key differences between Category 1 and Category 2 facilities:\n\n• Environmental Study: Category 1 requires a full EIA study; Category 2 requires only a simplified Environmental Impact Assessment Report (EIAR).\n• Review Period: 60 business days (Cat 1) vs. 30 business days (Cat 2).\n• Monitoring: Cat 1 mandates continuous self-monitoring with quarterly reporting; Cat 2 requires semi-annual reporting.\n• Emergency Plan: Mandatory for Cat 1; required for Cat 2 only when handling hazardous materials.\n\nBoth categories require renewal every 5 years and are subject to periodic inspection.',
     citations: [
-      { doc: 'Executive Regulation of Environmental Law — 4th Ed.', page: 52, excerpt: 'Article 16: Category 2 facilities shall submit a simplified environmental report...' },
-      { doc: 'دليل التصاريح البيئية للمنشآت', page: 18, excerpt: 'جدول مقارنة متطلبات الفئات الثلاث للتصاريح البيئية...' },
+      { doc: 'Executive Regulation of Environmental Law — 4th Ed.', page: 52, excerpt: 'Article 16: Category 2 facilities (medium environmental impact activities) shall submit a simplified Environmental Impact Assessment Report (EIAR). The review timeline is set to 30 business days upon full receipt of technical documentation, requiring semi-annual self-monitoring reports and emergency plans strictly when hazardous materials or chemicals are handled on site.' },
     ],
-    confidence: 94,
   },
 ]
 
@@ -120,7 +119,6 @@ const usage7d = [
 export default function DocAssistant() {
   const { lang, t } = useLang()
   const { role } = useRole()
-  const navigate = useNavigate()
   const isAr = lang === 'ar'
   const canChat = role.perms.chat
   const [msgs, setMsgs] = useState<Msg[]>(initialMsgs)
@@ -130,29 +128,119 @@ export default function DocAssistant() {
   const [entireKb, setEntireKb] = useState(false)
   const [viewer, setViewer] = useState<Citation | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
-  const viewerBody = viewer ? (citationBody[viewer.doc]?.[isAr ? 'ar' : 'en'] ?? citationBody[viewer.doc]?.en ?? []) : []
+  const globalDocs = useGlobalDocuments()
+  
+  const [translations, setTranslations] = useState<Record<number, { orig: string; trans: string; showing: 'orig' | 'trans' }>>({})
+  const [translating, setTranslating] = useState<Record<number, boolean>>({})
+
+  const handleTranslate = async (index: number, text: string) => {
+    const state = translations[index]
+    if (state) {
+      const nextShowing: 'orig' | 'trans' = state.showing === 'orig' ? 'trans' : 'orig'
+      setTranslations((prev) => ({
+        ...prev,
+        [index]: { ...state, showing: nextShowing }
+      }))
+      return
+    }
+
+    const isArabic = /[\u0600-\u06FF]/.test(text)
+    const targetLang = isArabic ? 'en' : 'ar'
+
+    setTranslating((prev) => ({ ...prev, [index]: true }))
+    try {
+      const result = await translateText(text, targetLang)
+      const newShowing: 'orig' | 'trans' = 'trans'
+      setTranslations((prev) => ({
+        ...prev,
+        [index]: { orig: text, trans: result, showing: newShowing }
+      }))
+    } catch (err) {
+      console.error('Translate error:', err)
+    } finally {
+      setTranslating((prev) => ({ ...prev, [index]: false }))
+    }
+  }
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs, typing])
 
-  const send = () => {
+  const send = async () => {
     if (!input.trim() || !canChat) return
     const q = input.trim()
     setMsgs((m) => [...m, { role: 'user', text: q }])
     setInput('')
     setTyping(true)
-    setTimeout(() => {
-      setTyping(false)
-      setMsgs((m) => [...m, {
-        role: 'ai',
-        text: isAr
-          ? 'بناءً على قاعدة المعرفة الداخلية، إليك الإجابة المدعومة بالمراجع الدقيقة. تم البحث في 11,393 وثيقة مفهرسة واسترجاع المقاطع الأكثر صلة عبر البحث الدلالي الهجين.'
-          : 'Based on the internal knowledge base, here is the answer supported by exact references. Searched 11,393 indexed documents and retrieved the most relevant passages via hybrid semantic search.',
-        citations: [
-          { doc: isAr ? 'اللائحة التنفيذية لنظام البيئة' : 'Executive Regulation of Environmental Law', page: 33, excerpt: isAr ? 'النص المرجعي المسترجع من الوثيقة الأصلية...' : 'Retrieved reference passage from the source document...' },
-        ],
-        confidence: 93,
+    
+    try {
+      // 1. Generate an embedding for the user's query
+      console.log('[RAG] Step 1: Generating embedding for query:', q);
+      const queryEmbedding = await generateEmbedding(q);
+      console.log('[RAG] Step 1 Done: Embedding generated, length:', queryEmbedding?.length);
+
+      // 2. Perform semantic search via pgvector in Supabase
+      console.log('[RAG] Step 2: Calling match_document_chunks RPC...');
+      const { data: matchedChunks, error } = await supabase.rpc('match_document_chunks', {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.2,
+        match_count: 5
+      });
+
+      if (error) {
+        console.error('[RAG] Step 2 RPC error:', error);
+      }
+      
+      let chunksToUse = matchedChunks || [];
+      console.log('[RAG] Step 2 Done: Matched chunks from vector DB:', chunksToUse.length);
+      chunksToUse.forEach((c: any, i: number) => {
+        console.log(`[RAG]   Chunk ${i+1}: doc="${c.document_name}", similarity=${c.similarity}, text="${c.chunk_text?.substring(0, 80)}..."`);
+      });
+
+      // 2b. Fallback: if vector search returned nothing, fetch documents directly
+      if (chunksToUse.length === 0) {
+        console.log('[RAG] Step 2b: No vector results. Falling back to direct document fetch...');
+        const { data: fallbackDocs, error: fbErr } = await supabase.from('documents').select('name, content');
+        if (fbErr) console.error('[RAG] Fallback fetch error:', fbErr);
+        
+        const docs = fallbackDocs || globalDocs;
+        if (docs.length > 0) {
+          chunksToUse = docs.slice(0, 1).map((d: any) => ({
+            document_name: d.name,
+            chunk_text: d.content?.substring(0, 2000) || '',
+            similarity: 0
+          }));
+          console.log('[RAG] Step 2b Done: Using fallback document');
+        }
+      }
+
+      // 3. Prepare the context for the LLM
+      const context = chunksToUse.map((c: any) => `Document Name: ${c.document_name}\nExcerpt: ${c.chunk_text}`).join('\n\n---\n\n');
+      console.log('[RAG] Step 3: Context prepared, length:', context.length, 'chars');
+      
+      // 4. Query Ollama local LLM
+      console.log('[RAG] Step 4: Sending to LLM...');
+      const response = await generateResponse(q, context);
+      console.log('[RAG] Step 4 Done: LLM responded, length:', response?.length);
+      
+      // 5. Build top 1 single citation from results
+      const topChunk = chunksToUse[0]
+      const citations: Citation[] = topChunk ? [{
+        doc: topChunk.document_name || 'Executive Regulation For Controls and Procedures.pdf',
+        page: extractPageNumber(topChunk.chunk_text || ''), 
+        excerpt: topChunk.chunk_text ? (topChunk.chunk_text.length > 400 ? topChunk.chunk_text.substring(0, 400) + '...' : topChunk.chunk_text) : ''
+      }] : []
+      console.log('[RAG] Step 5: Citation built:', citations.length);
+      
+      setMsgs((m) => [...m, { role: 'ai', text: response, citations, isTyping: true }])
+    } catch (err: any) {
+      setMsgs((m) => [...m, { 
+        role: 'ai', 
+        text: isAr 
+          ? `عذراً، حدث خطأ أثناء الاتصال بالنموذج المحلي: ${err.message}` 
+          : `Sorry, there was an error connecting to the local model: ${err.message}` 
       }])
-    }, 1400)
+    } finally {
+      setTyping(false)
+    }
   }
 
   return (
@@ -182,38 +270,52 @@ export default function DocAssistant() {
                   {m.role === 'ai' ? <Bot size={16} /> : <User size={16} />}
                 </div>
                 <div className={`max-w-[85%] ${m.role === 'user' ? 'text-end' : ''}`}>
-                  <div className={`rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
-                    m.role === 'ai' ? 'bg-slate-50 border border-slate-200 text-slate-700' : 'bg-sky-50 border border-sky-200 text-slate-800'
+                  <div className={`rounded-xl px-4 py-3 ${
+                    m.role === 'ai' ? 'bg-slate-50 border border-slate-200' : 'bg-sky-50 border border-sky-200 text-slate-800 text-sm leading-relaxed whitespace-pre-line'
                   }`} dir="auto">
-                    {m.text}
-                  </div>
-                  {m.citations && (
-                    <div className="mt-2 space-y-1.5">
-                      {m.citations.map((c, j) => (
-                        <div
-                          key={j}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setViewer(c)}
-                          onKeyDown={(e) => e.key === 'Enter' && setViewer(c)}
-                          title={isAr ? 'انقر لعرض المقطع في الوثيقة المصدر' : 'Click to open the passage in the source document'}
-                          className="flex items-start gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2 text-xs cursor-pointer hover:border-emerald-400 hover:shadow-sm transition-all"
-                        >
-                          <Quote size={12} className="text-amber-600 mt-0.5 shrink-0" />
-                          <div dir="auto" className="text-start">
-                            <p className="text-slate-700 font-medium">{c.doc} — <span className="text-amber-600">{isAr ? 'صفحة' : 'p.'} {c.page}</span></p>
-                            <p className="text-slate-400 mt-0.5 italic">"{c.excerpt}"</p>
+                    {m.role === 'ai' ? (
+                      <>
+                        <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-slate-200/60">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI DOCUMENT ASSISTANT</span>
+                          <div className="flex items-center gap-1.5">
+                            {m.citations && m.citations.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setViewer(m.citations![0])}
+                                title={isAr ? 'عرض مقتطفات ومصادر الوثيقة في نافذة منبثقة' : 'View citation source passage in popup window'}
+                                className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 hover:bg-amber-100/80 border border-amber-200 text-[11px] font-medium text-amber-800 hover:text-amber-900 transition-all cursor-pointer shadow-2xs group"
+                              >
+                                <Quote size={11} className="text-amber-600 group-hover:scale-110 transition-transform" />
+                                <span>{isAr ? 'المصادر' : 'Citations'}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleTranslate(i, m.text)}
+                              disabled={translating[i]}
+                              title={isAr ? 'تحويل اللغة في الوقت الفعلي (عربي / إنجليزي)' : 'Convert language in real time (EN / AR)'}
+                              className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 text-[11px] font-medium text-slate-600 hover:text-emerald-700 transition-all cursor-pointer shadow-2xs group"
+                            >
+                              <RefreshCw size={11} className={translating[i] ? "animate-spin text-emerald-600" : "text-slate-400 group-hover:text-emerald-600 transition-transform group-hover:rotate-180"} />
+                              <span>
+                                {translating[i]
+                                  ? (isAr ? 'جاري التحويل...' : 'Converting...')
+                                  : translations[i]
+                                    ? (translations[i].showing === 'trans' ? (isAr ? 'النص الأصلي' : 'Original') : (isAr ? 'ترجمة' : 'Translate'))
+                                    : (/[\u0600-\u06FF]/.test(m.text) ? 'English' : 'عربي')}
+                              </span>
+                            </button>
                           </div>
-                          <ChevronRight size={13} className="text-slate-300 ms-auto mt-1 rtl:rotate-180" />
                         </div>
-                      ))}
-                      <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                        <CheckCheck size={12} className="text-emerald-600" />
-                        {isAr ? 'الثقة' : 'Confidence'}: <span className="text-emerald-600 font-semibold">{m.confidence}%</span>
-                        · {m.citations.length} {isAr ? 'مراجع' : 'sources cited'}
-                      </div>
-                    </div>
-                  )}
+                        <TypewriterMarkdown
+                          text={translations[i] ? (translations[i].showing === 'trans' ? translations[i].trans : translations[i].orig) : m.text}
+                          isTyping={m.isTyping && !translations[i]}
+                        />
+                      </>
+                    ) : (
+                      m.text
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -328,51 +430,48 @@ export default function DocAssistant() {
         </div>
       </div>
 
-      {/* Citation source viewer */}
+      {/* Citation source viewer Popup Modal */}
       <Modal
         open={viewer !== null}
         onClose={() => setViewer(null)}
         title={viewer?.doc}
-        subtitle={`${isAr ? 'صفحة' : 'Page'} ${viewer?.page} · ${isAr ? 'المقطع المصدر المسترجع' : 'Retrieved source passage'}`}
+        subtitle={isAr ? 'تفاصيل الاقتباس والمصدر المسترجع' : 'Retrieved Source & Citation Details'}
         maxW="max-w-2xl"
       >
         {viewer && (
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Badge tone="emerald"><ShieldCheck size={10} /> {isAr ? 'مصدر موثق' : 'Verified source'}</Badge>
-              <Badge tone="sky">{isAr ? 'مفهرس — قاعدة المعرفة' : 'Indexed — Knowledge Base'}</Badge>
-              <Badge tone="slate">{isAr ? 'نسخة' : 'Version'} 4.0</Badge>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <Badge tone="emerald"><ShieldCheck size={10} /> {isAr ? 'مصدر موثق' : 'Verified Source'}</Badge>
+              <Badge tone="sky">{isAr ? 'مفهرس — قاعدة المعرفة' : 'Indexed — Vector DB'}</Badge>
+              <Badge tone="slate">{isAr ? 'صفحة' : 'Page'} {viewer.page || 1}</Badge>
             </div>
 
-            {/* Simulated document page */}
-            <div className="rounded-xl border border-slate-200 bg-white shadow-inner p-5" dir="auto">
-              <div className="flex items-center justify-between text-[10px] text-slate-400 border-b border-slate-100 pb-2 mb-3">
-                <span>{viewer.doc}</span>
-                <span>{isAr ? 'صفحة' : 'Page'} {viewer.page}</span>
-              </div>
-              {viewerBody.map((paragraph, idx) => (
-                <p key={idx} className="text-sm text-slate-600 leading-relaxed mb-3 last:mb-0">
-                  {paragraph}
+            {/* Document passage content */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-5 shadow-inner" dir="auto">
+              <div className="rounded-lg bg-white border border-amber-200/80 p-4 shadow-2xs">
+                <p className="text-xs font-semibold text-amber-900 mb-2 flex items-center gap-1.5 border-b border-amber-100 pb-2">
+                  <Quote size={14} className="text-amber-600" />
+                  {isAr ? 'النص المقتبس المسترجع من الوثيقة:' : 'Retrieved Citation Passage:'}
                 </p>
-              ))}
-              <div className="my-3 rounded-lg bg-amber-50 border-s-4 border-amber-400 px-4 py-3">
-                <p className="text-sm text-slate-800 leading-relaxed font-medium" dir="auto">"{viewer.excerpt}"</p>
-                <p className="text-[10px] text-amber-700 mt-1.5 flex items-center gap-1">
-                  <Quote size={10} /> {isAr ? 'المقطع المقتبس في إجابة المساعد' : 'Passage cited in the assistant’s answer'}
+                <p className="text-sm text-slate-700 leading-relaxed font-normal whitespace-pre-wrap">
+                  "{viewer.excerpt}"
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center justify-between mt-4">
-              <p className="text-[11px] text-slate-400">
-                {isAr ? 'استُرجع عبر البحث الدلالي الهجين — بدون هلوسة' : 'Retrieved via hybrid semantic search — zero hallucination'}
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => { setViewer(null); navigate('/knowledge-base') }}>
-                  <ExternalLink size={12} /> {isAr ? 'فتح في قاعدة المعرفة' : 'Open in Knowledge Base'}
-                </Button>
-                <Button size="sm" onClick={() => setViewer(null)}>{isAr ? 'إغلاق' : 'Close'}</Button>
+            {/* Bottom info bar showing Document Name and Page as required */}
+            <div className="mt-4 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+              <div className="flex items-center gap-2 text-slate-700 font-medium">
+                <FileText size={14} className="text-amber-600 shrink-0" />
+                <span className="truncate max-w-xs">{viewer.doc}</span>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+                  {isAr ? 'صفحة' : 'Page'} {viewer.page || 1}
+                </span>
               </div>
+              <Button size="sm" onClick={() => setViewer(null)}>
+                {isAr ? 'إغلاق' : 'Close'}
+              </Button>
             </div>
           </div>
         )}

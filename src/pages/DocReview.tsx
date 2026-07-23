@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   FileSearch, CheckCircle2, AlertTriangle, Wand2,
   ClipboardCheck, ScrollText, Replace, ScanSearch,
+  Loader2, UploadCloud
 } from 'lucide-react'
 import { PageHeader, Card, Badge, Button, KpiCard, ProgressBar, Modal } from '../components/ui'
 import { useLang } from '../i18n'
 import { useRole } from '../roles'
+import { extractPdfText } from '../utils/pdfExtractor'
+import { globalStore } from '../store'
 
 const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']
 
@@ -81,6 +84,31 @@ export default function DocReview() {
   const [docName, setDocName] = useState('')
   const [docType, setDocType] = useState(0)
   const [extraReviews, setExtraReviews] = useState(0)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [extractedData, setExtractedData] = useState<string | null>(null)
+  const [isExtracting, setIsExtracting] = useState(false)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsExtracting(true)
+    setDocName(file.name)
+    try {
+      if (file.type === 'application/pdf') {
+        const text = await extractPdfText(file)
+        setExtractedData(text)
+        globalStore.addDocument({ name: file.name, content: text })
+      } else {
+        setExtractedData(`File uploaded: ${file.name}. \nNote: Content extraction is optimized for PDF files.`)
+      }
+    } catch (err) {
+      console.error(err)
+      setExtractedData('Error extracting text from document.')
+    } finally {
+      setIsExtracting(false)
+    }
+  }
 
   const apply = (i: number) => {
     if (!canApply || findings[i].applied) return
@@ -231,6 +259,13 @@ export default function DocReview() {
               ))}
             </select>
           </div>
+          <div>
+             <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isExtracting} className="w-full">
+               {isExtracting ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />}
+               {isAr ? 'رفع ملف (اختياري)' : 'Upload File (Optional)'}
+             </Button>
+             <input type="file" className="hidden" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.doc,.docx" />
+          </div>
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-[11px] text-slate-500 leading-relaxed">
             {isAr
               ? 'ستُقارن الوثيقة مع 28 معياراً مرجعياً و744 وثيقة تنظيمية، وتُحسب درجة الجاهزية مع قائمة الملاحظات والتصحيحات المقترحة.'
@@ -242,6 +277,20 @@ export default function DocReview() {
               <ScanSearch size={13} /> {isAr ? 'بدء المراجعة الذكية' : 'Start AI Review'}
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!extractedData}
+        onClose={() => setExtractedData(null)}
+        title={isAr ? 'البيانات المستخرجة' : 'Extracted Data'}
+        subtitle={isAr ? 'البيانات النصية المستخرجة من المستند المرفوع' : 'Text data extracted from the uploaded document'}
+      >
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-96 overflow-y-auto whitespace-pre-wrap text-xs text-slate-700">
+          {extractedData}
+        </div>
+        <div className="flex justify-end mt-4">
+          <Button onClick={() => setExtractedData(null)}>{isAr ? 'إغلاق' : 'Close'}</Button>
         </div>
       </Modal>
     </div>
