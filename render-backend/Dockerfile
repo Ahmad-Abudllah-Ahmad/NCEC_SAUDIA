@@ -1,10 +1,9 @@
 # NCEC backend — OCR + ultra-light open-weight LLM (no Ollama)
 # Chat weights: Vicuna-68M Q3_K_S GGUF (~40 MB)
+# llama-cpp-python: prebuilt CPU wheel (never compile from source on Render)
 FROM python:3.10-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
     ca-certificates \
     curl \
     libgl1 \
@@ -18,8 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-# CPU-only llama-cpp for tiny GGUF inference
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir \
+        --only-binary=:all: \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+        "llama-cpp-python==0.2.62"
 
 COPY . .
 RUN chmod +x /app/start.sh \

@@ -12,7 +12,7 @@ No Ollama. Chat weights are tiny enough for Render starter memory. Embeddings us
 | `rag.py` | Embed → Supabase match + keyword → tiny LLM / extractive fallback |
 | `llm_engine.py` | Download/load Vicuna-68M GGUF; light embeddings |
 | `start.sh` | Ensures GGUF present, starts uvicorn |
-| `Dockerfile` | Slim Python image; bakes ~40 MB GGUF at build |
+| `Dockerfile` | Slim Python image; prebuilt `llama-cpp-python` CPU wheel + ~40 MB GGUF |
 
 ## Env vars (Render)
 
