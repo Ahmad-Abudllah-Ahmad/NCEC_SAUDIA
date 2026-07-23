@@ -2,11 +2,11 @@ services:
   - type: web
     name: ncec-ocr-backend
     runtime: docker
+    rootDir: render-backend
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: standard
     region: singapore
-    # First deploy pulls llama3.2:1b + nomic-embed-text (~1.5GB); allow longer boot
     healthCheckPath: /api/health
     envVars:
       - key: PORT
@@ -18,7 +18,7 @@ services:
       - key: CHAT_MODEL
         value: llama3.2:1b
       - key: OLLAMA_KEEP_ALIVE
-        value: 10m
+        value: 5m
       - key: OLLAMA_NUM_PARALLEL
         value: "1"
       - key: SUPABASE_URL
