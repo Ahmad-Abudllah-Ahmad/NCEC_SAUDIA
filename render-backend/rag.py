@@ -28,7 +28,28 @@ STOPWORDS = {
     "then", "them", "they", "their", "there", "these", "those", "your", "you",
     "can", "could", "would", "should", "will", "shall", "may", "might", "also",
     "only", "just", "any", "all", "each", "every", "some", "such", "not",
+    "هي", "ما", "من", "في", "على", "إلى", "عن", "هل", "أو", "ان", "أن",
 }
+
+# Arabic / colloquial → English search anchors for English-titled PDFs in the KB
+AR_EN_TOPIC_MAP = [
+    (r"تلوث\s*التربة|منع.*التربة|معالجة\s*التربة", ["Soil Pollution", "Prevention and Remediation of Soil", "Soil"]),
+    (r"جودة\s*الهواء|تلوث\s*الهواء|انبعاث", ["Air Quality", "Fugitive", "Ambient Air"]),
+    (r"بحر|ساحل|ساحلية|البيئة\s*البحرية", ["Marine", "Coastal", "Sustainable Management of the Marine"]),
+    (r"تأهيل|مواقع\s*متدهورة|إعادة\s*التأهيل", ["Rehabilitation", "Degraded Sites", "Remediation of Polluted"]),
+    (r"أوزون|مركبات\s*فلور", ["Ozone", "Hydrofluorocarbons"]),
+    (r"أوساط\s*مائية|مياه", ["Aqueous Media", "Water"]),
+    (r"ضوضاء|ضجيج", ["Noise"]),
+    (r"تفتيش|تدقيق", ["Inspection", "Audit"]),
+    (r"تصاريح|تراخيص|مقابل\s*مالي", ["Controls and Procedures", "Financial Due", "License"]),
+    (r"المادة", ["Article"]),
+]
+
+OOD_PATTERNS = [
+    r"\b(python|javascript|java|code|function|sort a list|algorithm|capital of|who won|weather|recipe)\b",
+    r"اكتب\s*(كود|دالة|برنامج)",
+    r"عاصمة\s+",
+]
 
 
 class RAGError(Exception):
@@ -132,9 +153,10 @@ def snippet_around(content: str, term: str, window: int = 1400) -> str:
 
 
 def best_article_snippet(content: str, query: str, fallback_term: str = "") -> str:
-    """Prefer a window around Article (N) from the question inside document content."""
+    """Prefer a wide window around Article (N) or topic headings for deeper answers."""
     if not content:
         return ""
+    lower = content.lower()
     nums = re.findall(r"(?:Article|المادة)\s*\(?\s*(\d+)\s*\)?", query, flags=re.I)
     for n in nums:
         patterns = [
@@ -146,12 +168,62 @@ def best_article_snippet(content: str, query: str, fallback_term: str = "") -> s
         for pat in patterns:
             m = re.search(pat, content, flags=re.I)
             if m:
-                start = max(0, m.start() - 80)
-                end = min(len(content), m.start() + 1600)
+                start = max(0, m.start() - 120)
+                end = min(len(content), m.start() + 2400)
                 return content[start:end]
+
+    for heading in (
+        "Article (6) – Role of Persons regarding Soil",
+        "Emissions of Fugitive Organic Matter",
+        "Ambient Air Quality Standards",
+        "Violations Apprehension and Penalties",
+        "Scope of Application",
+        "Sustainable Management of the Marine",
+        "License for Marine Wildlife",
+        "License for Planting Mangroves",
+        "Financial Due",
+        "Review of the Rehabilitation Plans",
+    ):
+        idx = lower.find(heading.lower())
+        if idx >= 0:
+            # Use heading if query shares a strong token with it, or Arabic soil/air/marine mapped
+            h_tokens = set(significant_tokens(heading))
+            q_tokens = set(significant_tokens(query))
+            mapped = expand_bilingual_terms(query)
+            if h_tokens & q_tokens or any(m.lower() in heading.lower() for m in mapped):
+                start = max(0, idx - 80)
+                end = min(len(content), idx + 2200)
+                return content[start:end]
+
     if fallback_term:
-        return snippet_around(content, fallback_term)
-    return content[:2000]
+        snip = snippet_around(content, fallback_term, window=2000)
+        if len(snip) > 200:
+            return snip
+    return content[:2800]
+
+
+def expand_bilingual_terms(query: str) -> list[str]:
+    """Map Arabic / topic cues to English PDF title fragments stored in Supabase."""
+    extra: list[str] = []
+    for pat, en_terms in AR_EN_TOPIC_MAP:
+        if re.search(pat, query, flags=re.I):
+            extra.extend(en_terms)
+    # English topic cues → document-name anchors
+    if re.search(r"\bsoil\b", query, re.I):
+        extra.extend(["Soil Pollution", "Prevention and Remediation of Soil"])
+    if re.search(r"\bair quality\b|\bfugitive\b|\bambient\b", query, re.I):
+        extra.extend(["Air Quality", "Fugitive Organic"])
+    if re.search(r"\bmarine\b|\bcoastal\b|\bmangrove\b|\bmooring\b", query, re.I):
+        extra.extend(["Marine and Coastal", "Sustainable Management of the Marine", "Mooring", "Mangrove"])
+    if re.search(r"\brehabilitat|\bdegraded site|\bpolluted site", query, re.I):
+        extra.extend(["Environmental Rehabilitation", "Degraded Sites"])
+    if re.search(r"\blicen[cs]e|\bpermit|\bfinancial due|\bfee\b", query, re.I):
+        extra.extend(["Controls and Procedures", "Financial Due"])
+    return extra
+
+
+def is_out_of_domain(query: str) -> bool:
+    return any(re.search(p, query, flags=re.I) for p in OOD_PATTERNS)
 
 
 def _search_terms(query: str) -> list[str]:
@@ -169,17 +241,20 @@ def _search_terms(query: str) -> list[str]:
             f"Article ({n})",
             f"Article {n}",
             f"المادة ({n})",
-            f"Role of Persons",  # common Article(6) soil heading fragment
+            "Role of Persons",
         ])
 
-    # Topic phrases
     for m in re.finditer(
         r"(Soil Pollution|تلوث التربة|Air Quality|جودة الهواء|"
-        r"Environmental Law|Environmental Compliance|EIA|نطاق)",
+        r"Marine|Coastal|Mangrove|Mooring|Financial Due|"
+        r"Environmental Law|Environmental Compliance|EIA|نطاق|"
+        r"Rehabilitation|Degraded)",
         query,
         flags=re.I,
     ):
         terms.append(m.group(0).strip())
+
+    terms.extend(expand_bilingual_terms(query))
 
     for t in significant_tokens(query):
         if len(t) >= 4:
@@ -192,7 +267,7 @@ def _search_terms(query: str) -> list[str]:
         if k not in seen:
             seen.add(k)
             out.append(t)
-    return out[:10]
+    return out[:14]
 
 
 def _ilike_path(table_select: str, column: str, term: str, limit: int) -> str:
@@ -210,10 +285,17 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
         return []
 
     terms = _search_terms(query)
-    # Always include short high-signal singles (Soil, Pollution, Article)
-    for extra in re.findall(r"\b(Soil|Pollution|Article|Air|Marine|Coastal|المادة|تربة)\b", query, flags=re.I):
+    # Always include short high-signal singles
+    for extra in re.findall(
+        r"\b(Soil|Pollution|Article|Air|Marine|Coastal|Mangrove|Mooring|المادة|تربة|الهواء|بحر)\b",
+        query,
+        flags=re.I,
+    ):
         if extra not in terms:
             terms.insert(0, extra)
+    for t in expand_bilingual_terms(query):
+        if t not in terms:
+            terms.insert(0, t)
     if not terms:
         return []
 
@@ -291,44 +373,48 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
     return results[:limit]
 
 
-DOCUMENT_SYSTEM = """You are the NCEC AI Document Assistant — an expert system for the Saudi National Center for Environmental Compliance (NCEC).
+DOCUMENT_SYSTEM = """You are the NCEC Executive Document Intelligence Assistant for the Saudi National Center for Environmental Compliance.
 
-Your role is to help staff find and understand information from their uploaded documents (environmental regulations, executive regulations, guidelines, circulars, reports, EIA studies, etc.).
+MISSION: Produce professional, in-depth briefings from the organization's vector knowledge base for NCEC staff.
 
-STRICT GROUNDING RULES (non-negotiable):
-1. Answer ONLY from the Context Documents provided below. They come from the organization's vector knowledge base.
-2. You MAY clarify, rephrase, organize, summarize, and elaborate for readability — but every fact, number, obligation, definition, and article reference MUST come from the context.
-3. Do NOT invent, assume, update, or "correct" the source text. Do NOT use outside knowledge or general legal knowledge.
-4. If the context is missing the answer, say clearly: "The available documents do not contain enough information to answer this question."
-5. Prefer quoting or closely paraphrasing operative clauses. Always cite Article/clause numbers and document names when present.
-6. Ignore OCR noise such as "[Page 2] 3 of 30" and table-of-contents dotted lines.
-7. Respond in the same language as the user's question (Arabic or English).
-8. Structure the answer in clear Markdown with headings, bullet points, and numbered lists.
-9. Be thorough and comprehensive — include ALL relevant information found across ALL provided source documents.
-10. If multiple documents contain relevant information, synthesize and present information from all of them."""
+STRICT GROUNDING (non-negotiable):
+1. Use ONLY the Context Documents below. Every fact, figure, obligation, definition, fee, and article citation must appear in that context.
+2. You MAY elaborate, clarify, and professionally reorganize the material for executive readability — but you must NOT invent, update, or import outside knowledge.
+3. If the context is insufficient, state that clearly and stop. Do NOT fill gaps with general knowledge, code, world facts, or speculation.
+4. Ignore OCR page markers and table-of-contents dotted leaders.
 
-LEGAL_SYSTEM = """You are the NCEC AI Legal & Policy Assistant — a specialized legal expert system for NCEC staff.
+PROFESSIONAL ANSWER STANDARD:
+1. Open with a one-sentence executive summary.
+2. Then provide structured depth: headings, numbered obligations/clauses, and bullet lists where useful.
+3. Quote or closely paraphrase operative language; always cite Document name + Article/clause when available.
+4. Cover ALL relevant sources in the context — synthesize without contradiction; if sources differ, note both.
+5. Where fees, limits, timelines, or penalties appear, present them precisely (amounts, units, conditions).
+6. Close with a short "Sources used" list of document names referenced.
+7. Match the user's language (Arabic or English).
+8. Tone: formal, precise, suitable for regulatory staff — not casual, not marketing."""
 
-Your role is to provide accurate legal and regulatory guidance by analyzing the organization's environmental laws, executive regulations, and policy documents.
+LEGAL_SYSTEM = """You are the NCEC Executive Legal & Policy Assistant for internal NCEC staff.
 
-STRICT GROUNDING RULES (non-negotiable):
-1. Answer ONLY from the Context Documents provided below. They come from the organization's vector knowledge base.
-2. You MAY elaborate, interpret, and organize legal text for clarity, but you must NOT change legal meaning, add rules not in the context, or speculate on legal outcomes.
-3. Always quote Article numbers, clause numbers, and regulation names when present.
-4. If the context does not support an answer, say: "The available legal documents do not contain enough information to answer this question."
-5. Ignore page footers, OCR noise, and TOC dotted lines.
-6. Respond in the same language as the user's question (Arabic or English).
-7. Structure answers with Markdown headings, bullet points, and numbered lists for clarity.
-8. When discussing penalties or obligations, quote the exact text and reference the specific article.
-9. Be thorough — present ALL relevant legal provisions found across ALL provided source documents.
-10. If different regulations address the same topic, compare and cross-reference them."""
+MISSION: Deliver accurate, in-depth legal briefings grounded solely in uploaded laws, executive regulations, and policy documents.
+
+STRICT GROUNDING (non-negotiable):
+1. Answer ONLY from Context Documents. Do not invent articles, penalties, or procedures.
+2. You MAY elaborate and organize for clarity; you must NOT change legal meaning.
+3. If unsupported by context, say the legal documents do not contain enough information — then stop.
+4. Never answer coding, general trivia, or non-regulatory requests from outside knowledge.
+
+PROFESSIONAL LEGAL FORMAT:
+1. Executive summary (1–2 sentences).
+2. Applicable instrument(s) and scope.
+3. Operative provisions (Articles/clauses) with precise obligations, prohibitions, fees, or penalties.
+4. Cross-references if multiple regulations in context address the same point.
+5. Sources used (document names).
+6. Same language as the user. Formal regulatory tone."""
 
 
 def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: list[dict], limit: int = 10) -> list[dict]:
     merged: list[dict] = []
     seen: set[str] = set()
-
-    # Prefer keyword hits first — hash embeddings are weak / often mismatched
     ordered = list(keyword_chunks) + list(vector_chunks)
 
     for c in ordered:
@@ -341,7 +427,9 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
             continue
         seen.add(key)
         overlap = float(c.get("lexical") or lexical_overlap(question, f"{name}\n{text}"))
-        # Keep vector hits if they have any lexical relevance (relaxed thresholds)
+        # Also score overlap against bilingual expanded English anchors
+        expanded_q = " ".join(expand_bilingual_terms(question) + [question])
+        overlap = max(overlap, lexical_overlap(expanded_q, f"{name}\n{text}"))
         if c.get("source") == "vector" and keyword_chunks and overlap < 0.05:
             continue
         if c.get("source") == "vector" and not keyword_chunks and overlap < 0.03:
@@ -349,7 +437,7 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
         merged.append(
             {
                 "document_name": name,
-                "chunk_text": text[:2500],
+                "chunk_text": text[:3200],
                 "similarity": float(c.get("similarity") or 0),
                 "lexical": overlap,
                 "source": c.get("source") or "vector",
@@ -358,31 +446,37 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
 
     article_hits = re.findall(r"(?:Article|المادة)\s*\(?\s*\d+\s*\)?", question, flags=re.I)
     wants_soil = bool(re.search(r"soil|تربة", question, flags=re.I))
-    wants_air = bool(re.search(r"air quality|جودة الهواء|fugitive", question, flags=re.I))
+    wants_air = bool(re.search(r"air quality|جودة الهواء|fugitive|انبعاث", question, flags=re.I))
+    wants_marine = bool(re.search(r"marine|coastal|mangrove|mooring|بحر|ساحل", question, flags=re.I))
+    wants_fees = bool(re.search(r"fee|financial due|license|permit|مقابل|ترخيص|تصريح", question, flags=re.I))
 
     def score(c: dict) -> float:
         text = c.get("chunk_text") or ""
         name = c.get("document_name") or ""
         blob = f"{name}\n{text}".lower()
-        s = float(c.get("similarity") or 0) + float(c.get("lexical") or 0) * 1.5
+        s = float(c.get("similarity") or 0) + float(c.get("lexical") or 0) * 1.6
         if c.get("source") == "keyword":
-            s += 0.25
-        if wants_soil and ("soil" in blob or "تربة" in blob or "prevention and remediation of soil" in blob):
-            s += 0.6
-        if wants_soil and ("air quality" in blob or "marine" in blob) and "soil" not in blob:
-            s -= 0.55
-        if wants_air and "air" in blob:
             s += 0.3
+        if wants_soil and ("soil" in blob or "تربة" in blob or "prevention and remediation of soil" in blob):
+            s += 0.7
+        if wants_soil and ("air quality" in blob or "marine" in blob) and "soil" not in blob:
+            s -= 0.6
+        if wants_air and ("air quality" in blob or "fugitive" in blob or "ambient" in blob):
+            s += 0.55
+        if wants_marine and ("marine" in blob or "coastal" in blob or "mangrove" in blob or "mooring" in blob):
+            s += 0.7
+        if wants_fees and ("financial due" in blob or "saudi riyals" in blob or "license" in blob):
+            s += 0.45
         for a in article_hits:
             nums = re.findall(r"\d+", a)
             if not nums:
                 continue
             if re.search(rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?", text, re.I):
-                s += 0.6
+                s += 0.65
         return s
 
     merged.sort(key=score, reverse=True)
-    strong = [c for c in merged if c.get("lexical", 0) >= 0.1 or score(c) >= 0.6]
+    strong = [c for c in merged if c.get("lexical", 0) >= 0.08 or score(c) >= 0.55]
     return (strong or merged)[:limit]
 
 
@@ -393,8 +487,26 @@ def run_rag_chat(
     match_count: int = 12,
 ) -> dict:
     question = (question or "").strip()
-    embedding = embed_text(question)
 
+    if is_out_of_domain(question):
+        no_info = (
+            "This assistant answers only from NCEC document knowledge base content "
+            "(environmental regulations, guidelines, and related records). "
+            "The question is outside that scope, so no document-based answer can be provided."
+            if not re.search(r"[\u0600-\u06FF]", question)
+            else "هذا المساعد يجيب فقط من وثائق قاعدة معرفة المركز الوطني للرقابة على الالتزام البيئي. "
+            "السؤال خارج نطاق الوثائق المتاحة، لذا لا يمكن تقديم إجابة مستندة إلى قاعدة الوثائق."
+        )
+        return {
+            "answer": no_info,
+            "citations": [],
+            "chunks_used": 0,
+            "engine": CHAT_MODEL_LABEL,
+            "model_info": engine_status(),
+            "retrieval": {"keyword_hits": 0, "vector_hits": 0, "used": [], "ood": True},
+        }
+
+    embedding = embed_text(question)
     kw = keyword_search(question, limit=match_count)
 
     vector_chunks: list[dict] = []
@@ -410,12 +522,16 @@ def run_rag_chat(
         for c in raw_vec:
             text = c.get("chunk_text") or ""
             name = c.get("document_name") or "Unknown"
+            expanded_q = " ".join(expand_bilingual_terms(question) + [question])
             vector_chunks.append(
                 {
                     "document_name": name,
                     "chunk_text": text,
                     "similarity": float(c.get("similarity") or 0),
-                    "lexical": lexical_overlap(question, f"{name}\n{text}"),
+                    "lexical": max(
+                        lexical_overlap(question, f"{name}\n{text}"),
+                        lexical_overlap(expanded_q, f"{name}\n{text}"),
+                    ),
                     "source": "vector",
                 }
             )
@@ -436,7 +552,7 @@ def run_rag_chat(
 
     context_parts = []
     for i, c in enumerate(chunks[:8], start=1):
-        text = c.get("chunk_text", "")[:3000]
+        text = c.get("chunk_text", "")[:3200]
         if len(text) < 40:
             continue
         context_parts.append(
@@ -456,30 +572,30 @@ def run_rag_chat(
     prompt = (
         f"Context Documents (vector knowledge base excerpts):\n{context}\n\n"
         f"User Question:\n{question}\n\n"
-        "Instructions:\n"
-        "- Answer the user's question thoroughly and comprehensively using ONLY the context above.\n"
-        "- Include ALL relevant information from ALL source documents provided.\n"
-        "- You may elaborate, organize, and structure clearly, but do not add facts that are not in the context.\n"
-        "- Always cite the specific document name, Article number, and clause number when present.\n"
-        "- If the question asks about a specific topic, gather and present information from every source that mentions it.\n"
-        "- Use Markdown formatting (headings, bullet points, numbered lists) to structure the answer clearly.\n"
-        "- If the context does not contain the answer, say you do not have enough information.\n"
-        "- Do NOT refuse to answer if the context contains relevant information — always provide what you can."
+        "Produce a professional, in-depth answer for NCEC staff.\n"
+        "Requirements:\n"
+        "1) Executive summary first.\n"
+        "2) Detailed body with Articles/clauses, obligations, fees, penalties, and conditions found in the context.\n"
+        "3) Cite document names and Article numbers.\n"
+        "4) Use only the context — no outside knowledge, no code, no world trivia.\n"
+        "5) If context is incomplete, say what is missing after presenting what is available.\n"
+        "6) End with a short Sources used list.\n"
+        "7) Match the user's language."
     )
 
-    answer = generate_text(prompt, system, max_tokens=2048)
+    answer = generate_text(prompt, system, max_tokens=2500)
     answer = clean_chunk(answer)
     answer = re.sub(r"(\[Page\s*\d+\]\s*)+", "", answer, flags=re.I).strip()
 
     citations = [
         {
             "document_name": c.get("document_name", "Unknown"),
-            "chunk_text": (c.get("chunk_text") or "")[:600],
+            "chunk_text": (c.get("chunk_text") or "")[:700],
             "similarity": c.get("similarity", 0),
             "lexical": c.get("lexical", 0),
             "source": c.get("source"),
         }
-        for c in chunks[:3]
+        for c in chunks[:4]
     ]
 
     return {
@@ -495,7 +611,7 @@ def run_rag_chat(
                     "lexical": round(float(c.get("lexical") or 0), 3),
                     "source": c.get("source"),
                 }
-                for c in chunks[:5]
+                for c in chunks[:6]
             ],
         },
         "engine": CHAT_MODEL_LABEL,
