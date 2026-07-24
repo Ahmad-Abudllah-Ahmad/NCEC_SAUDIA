@@ -60,7 +60,7 @@ export async function askRAG(
   const threshold = mode === 'legal' ? 0.1 : 0.15
 
   try {
-    const result = await ragChat(question, mode, threshold, 10)
+    const result = await ragChat(question, mode, threshold, 15)
     return {
       answer: result.answer,
       citations: buildCitations(result.citations),

@@ -31,7 +31,7 @@ CHAT_MODEL_LABEL = _raw_model if _raw_model in _ALLOWED_GROQ else "llama-3.3-70b
 _last_error: Optional[str] = None
 
 
-def _groq_chat(messages: list[dict], max_tokens: int = 2048) -> str:
+def _groq_chat(messages: list[dict], max_tokens: int = 4096) -> str:
     """Call Groq chat completions. Prefer curl (urllib is often CF-blocked from Render)."""
     global _last_error
     if not GROQ_API_KEY:
@@ -43,8 +43,8 @@ def _groq_chat(messages: list[dict], max_tokens: int = 2048) -> str:
     payload = {
         "model": CHAT_MODEL_LABEL,
         "messages": messages,
-        "temperature": 0.05,
-        "top_p": 0.85,
+        "temperature": 0.1,
+        "top_p": 0.9,
         "max_tokens": max_tokens,
     }
     url = f"{GROQ_BASE}/chat/completions"
@@ -133,7 +133,7 @@ def _groq_chat(messages: list[dict], max_tokens: int = 2048) -> str:
         raise RuntimeError(_last_error) from e
 
 
-def generate_text(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
+def generate_text(prompt: str, system: str = "", max_tokens: int = 4096) -> str:
     """Generate with Groq Llama; fall back to extractive answer from context."""
     try:
         messages = []
