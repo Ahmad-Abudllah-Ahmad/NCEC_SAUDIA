@@ -53,20 +53,38 @@ def _search_terms(query: str) -> list[str]:
     terms: list[str] = []
     # Prefer article / regulation phrases for legal docs
     for m in re.finditer(
-        r"(Article\s*\(?\s*\d+\s*\)?|المادة\s*\(?\s*\d+\s*\)?|Soil Pollution|تلوث التربة)",
+        r"(Article\s*\(?\s*\d+\s*\)?|المادة\s*\(?\s*\d+\s*\)?|"
+        r"Soil Pollution|تلوث التربة|Soil Pollution Prevention)",
         query,
         flags=re.I,
     ):
         terms.append(m.group(0).strip())
+    # If soil + article mentioned, add combined phrases for better chunk hits
+    art_nums = re.findall(r"(?:Article|المادة)\s*\(?\s*(\d+)\s*\)?", query, flags=re.I)
+    if art_nums and re.search(r"soil|تربة", query, flags=re.I):
+        n = art_nums[0]
+        terms[0:0] = [
+            f"Article ({n}) – Role of Persons regarding Soil",
+            f"Article ({n})",
+            "Soil Pollution Prevention and Protection",
+        ]
     tokens = re.findall(r"[\u0600-\u06FF]{2,}|[a-zA-Z]{3,}", query)
     # Drop ultra-generic words
-    stop = {"the", "and", "for", "about", "this", "that", "with", "from", "tell", "more", "what"}
+    stop = {"the", "and", "for", "about", "this", "that", "with", "from", "tell", "more", "what", "must", "persons", "role"}
     for t in tokens:
         if t.lower() in stop:
             continue
         if t not in terms:
             terms.append(t)
-    return terms[:8]
+    # Dedupe
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in terms:
+        k = t.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out[:8]
 
 
 def keyword_search(query: str, limit: int = 6) -> list[dict]:
@@ -201,27 +219,34 @@ def run_rag_chat(
                 chunks.append(k)
                 seen_keys.add(key)
 
-    # Rank: prefer chunks that mention article terms from the question
+    # Rank: prefer chunks matching topic (soil) + article number
     article_hits = re.findall(r"(?:Article|المادة)\s*\(?\s*\d+\s*\)?", question, flags=re.I)
-    if article_hits:
-        def score(c: dict) -> float:
-            text = (c.get("chunk_text") or "").lower()
-            bonus = 0.0
-            for a in article_hits:
-                nums = re.findall(r"\d+", a)
-                if not nums:
-                    continue
-                if re.search(
-                    rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?",
-                    text,
-                    re.I,
-                ):
-                    bonus += 0.5
-                elif nums[0] in text:
-                    bonus += 0.15
-            return float(c.get("similarity") or 0) + bonus
+    wants_soil = bool(re.search(r"soil|تربة", question, flags=re.I))
 
-        chunks = sorted(chunks, key=score, reverse=True)
+    def score(c: dict) -> float:
+        text = (c.get("chunk_text") or "")
+        name = (c.get("document_name") or "")
+        blob = f"{name}\n{text}".lower()
+        bonus = 0.0
+        if wants_soil and ("soil" in blob or "تربة" in blob):
+            bonus += 0.4
+        if wants_soil and "air quality" in blob and "soil" not in blob:
+            bonus -= 0.35
+        for a in article_hits:
+            nums = re.findall(r"\d+", a)
+            if not nums:
+                continue
+            if re.search(
+                rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?",
+                text,
+                re.I,
+            ):
+                bonus += 0.5
+            elif nums[0] in text:
+                bonus += 0.1
+        return float(c.get("similarity") or 0) + bonus
+
+    chunks = sorted(chunks, key=score, reverse=True)
 
     if not chunks:
         no_info = (

@@ -32,6 +32,7 @@ _last_error: Optional[str] = None
 
 
 def _groq_chat(messages: list[dict], max_tokens: int = 1024) -> str:
+    """Call Groq chat completions. Prefer curl (urllib is often CF-blocked from Render)."""
     global _last_error
     if not GROQ_API_KEY:
         raise RuntimeError(
@@ -46,13 +47,74 @@ def _groq_chat(messages: list[dict], max_tokens: int = 1024) -> str:
         "top_p": 0.9,
         "max_tokens": max_tokens,
     }
+    url = f"{GROQ_BASE}/chat/completions"
+    body = json.dumps(payload)
+
+    # 1) curl — more reliable from Render (avoids Cloudflare 1010 on urllib)
+    try:
+        import subprocess
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            fh.write(body)
+            payload_path = fh.name
+        try:
+            proc = subprocess.run(
+                [
+                    "curl",
+                    "-sS",
+                    "-m",
+                    "60",
+                    "-X",
+                    "POST",
+                    url,
+                    "-H",
+                    f"Authorization: Bearer {GROQ_API_KEY}",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    "Accept: application/json",
+                    "--data-binary",
+                    f"@{payload_path}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=70,
+                check=False,
+            )
+        finally:
+            try:
+                os.unlink(payload_path)
+            except OSError:
+                pass
+
+        if proc.returncode == 0 and proc.stdout.strip():
+            data = json.loads(proc.stdout)
+            if isinstance(data, dict) and data.get("error"):
+                err = data["error"]
+                msg = err.get("message") if isinstance(err, dict) else str(err)
+                raise RuntimeError(f"Groq API error: {msg}")
+            choice = (data.get("choices") or [{}])[0]
+            text = ((choice.get("message") or {}).get("content") or "").strip()
+            if text:
+                _last_error = None
+                return text
+            raise RuntimeError(f"Groq curl empty/invalid: {proc.stdout[:300]}")
+        raise RuntimeError(
+            f"Groq curl failed (code={proc.returncode}): {(proc.stderr or proc.stdout)[:300]}"
+        )
+    except Exception as curl_err:
+        print(f"Groq curl path warning: {curl_err}")
+
+    # 2) urllib fallback
     req = urllib.request.Request(
-        f"{GROQ_BASE}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
+        url,
+        data=body.encode("utf-8"),
         headers={
             "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json",
-            "User-Agent": "ncec-ocr-backend/2.1 (+https://github.com/Ahmad-Abudllah-Ahmad/NCEC_SAUDIA)",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; NCEC-Backend/2.1)",
         },
         method="POST",
     )
@@ -61,14 +123,13 @@ def _groq_chat(messages: list[dict], max_tokens: int = 1024) -> str:
             data = json.loads(resp.read().decode("utf-8"))
         _last_error = None
         choice = (data.get("choices") or [{}])[0]
-        msg = choice.get("message") or {}
-        text = (msg.get("content") or "").strip()
+        text = ((choice.get("message") or {}).get("content") or "").strip()
         if not text:
             raise RuntimeError("Groq returned an empty response")
         return text
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        _last_error = f"Groq HTTP {e.code}: {body[:400]}"
+        err_body = e.read().decode("utf-8", errors="replace")
+        _last_error = f"Groq HTTP {e.code}: {err_body[:400]}"
         raise RuntimeError(_last_error) from e
 
 
