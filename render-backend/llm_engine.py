@@ -147,21 +147,30 @@ def generate_text(prompt: str, system: str = "", max_tokens: int = 1024) -> str:
 
 
 def extractive_answer(prompt: str, system: str = "") -> str:
-    """Fallback: answer strictly by quoting retrieved context."""
-    blob = f"{system}\n{prompt}"
-    is_ar = bool(re.search(r"[\u0600-\u06FF]", blob))
+    """Fallback: answer strictly by quoting retrieved context (never echo system prompt)."""
+    # Use user prompt only — system text must not appear in the answer
+    blob = prompt or ""
+    is_ar = bool(re.search(r"[\u0600-\u06FF]", f"{system}\n{blob}"))
 
     # Pull the user question if present (for article targeting)
     question = ""
     if "\nUser Question:" in blob:
         question = blob.split("\nUser Question:", 1)[1].strip()
+        # Drop trailing instruction blocks
+        for cut in ("\nInstructions:", "\nWrite a precise", "\nAnswer using"):
+            if cut in question:
+                question = question.split(cut, 1)[0].strip()
 
     ctx = blob
-    for marker in ("Context Documents:", "Context Documents from Vector Database:"):
+    for marker in (
+        "Context Documents (vector knowledge base excerpts):",
+        "Context Documents:",
+        "Context Documents from Vector Database:",
+    ):
         if marker in blob:
             ctx = blob.split(marker, 1)[1]
             break
-    for stop in ("\nUser Question:", "\nUser Question\n"):
+    for stop in ("\nUser Question:", "\nUser Question\n", "\nInstructions:"):
         if stop in ctx:
             ctx = ctx.split(stop, 1)[0]
 
