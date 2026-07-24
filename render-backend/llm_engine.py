@@ -52,6 +52,7 @@ def _groq_chat(messages: list[dict], max_tokens: int = 1024) -> str:
         headers={
             "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "ncec-ocr-backend/2.1 (+https://github.com/Ahmad-Abudllah-Ahmad/NCEC_SAUDIA)",
         },
         method="POST",
     )
@@ -88,6 +89,12 @@ def extractive_answer(prompt: str, system: str = "") -> str:
     """Fallback: answer strictly by quoting retrieved context."""
     blob = f"{system}\n{prompt}"
     is_ar = bool(re.search(r"[\u0600-\u06FF]", blob))
+
+    # Pull the user question if present (for article targeting)
+    question = ""
+    if "\nUser Question:" in blob:
+        question = blob.split("\nUser Question:", 1)[1].strip()
+
     ctx = blob
     for marker in ("Context Documents:", "Context Documents from Vector Database:"):
         if marker in blob:
@@ -96,14 +103,41 @@ def extractive_answer(prompt: str, system: str = "") -> str:
     for stop in ("\nUser Question:", "\nUser Question\n"):
         if stop in ctx:
             ctx = ctx.split(stop, 1)[0]
+
     pieces = [p.strip() for p in re.split(r"\n---\n", ctx) if p.strip()]
     cleaned_pieces = []
-    for p in pieces[:4]:
-        # Prefer the Text: section if present
+    for p in pieces[:6]:
         if "\nText:" in p:
             p = p.split("\nText:", 1)[1]
-        cleaned_pieces.append(clean_ocr_noise(p)[:900])
-    body = "\n\n".join(c for c in cleaned_pieces if c).strip()
+        elif p.startswith("Text:"):
+            p = p.split("Text:", 1)[1]
+        p = clean_ocr_noise(p)
+        # Skip TOC / dotted-leader junk
+        if p.count(".") > 40 and len(re.findall(r"\.{4,}", p)) >= 3:
+            continue
+        if len(re.sub(r"[\W_\d]+", "", p)) < 50:
+            continue
+        cleaned_pieces.append(p[:1200])
+
+    # If question mentions an Article N, prefer the slice around that article
+    article_nums = re.findall(
+        r"(?:Article|المادة)\s*\(?\s*(\d+)\s*\)?", question, flags=re.I
+    )
+    if article_nums and cleaned_pieces:
+        n = article_nums[0]
+        focused = []
+        for p in cleaned_pieces:
+            m = re.search(
+                rf"(?:Article|المادة)\s*\(?\s*{re.escape(n)}\s*\)?.{{0,1200}}",
+                p,
+                flags=re.I | re.S,
+            )
+            if m:
+                focused.append(clean_ocr_noise(m.group(0))[:1100])
+        if focused:
+            cleaned_pieces = focused + [p for p in cleaned_pieces if p not in focused]
+
+    body = "\n\n".join(cleaned_pieces[:3]).strip()
     if not body:
         return (
             "لا تتوفر معلومات كافية في الوثائق المتاحة للإجابة على هذا السؤال."
@@ -111,8 +145,14 @@ def extractive_answer(prompt: str, system: str = "") -> str:
             else "I do not have enough information in the provided documents to answer this question."
         )
     if is_ar:
-        return f"## ملخص من قاعدة الوثائق\n\n{body}\n\n- **ملاحظة**: الإجابة مستخلصة حصراً من الوثائق المسترجعة."
-    return f"## Answer from document knowledge base\n\n{body}\n\n- **Note**: Answer is taken strictly from retrieved documents."
+        return (
+            f"## ملخص من قاعدة الوثائق\n\n{body}\n\n"
+            "- **ملاحظة**: وضع احتياطي — تعذر الاتصال بنموذج Llama عبر Groq."
+        )
+    return (
+        f"## Answer from document knowledge base\n\n{body}\n\n"
+        "- **Note**: Extractive fallback — Groq Llama was unavailable for this request."
+    )
 
 
 def clean_ocr_noise(text: str) -> str:
