@@ -165,11 +165,14 @@ def _search_terms(query: str) -> list[str]:
     return out[:10]
 
 
-def _ilike_filter(column: str, term: str) -> str:
-    """PostgREST-safe ilike filter (quoted for parentheses/spaces)."""
-    # Escape quotes inside term
-    safe = term.replace('"', "")
-    return f'{column}=ilike."*{safe}*"'
+def _ilike_path(table_select: str, column: str, term: str, limit: int) -> str:
+    """Build a PostgREST path with a proven ilike.*term* filter."""
+    # Keep terms simple for PostgREST; strip chars that break filters
+    safe = re.sub(r'[,"\\]', " ", term).strip()
+    if not safe:
+        safe = term.strip()
+    pattern = urllib.parse.quote(f"*{safe}*", safe="")
+    return f"{table_select}&{column}=ilike.{pattern}&limit={limit}"
 
 
 def keyword_search(query: str, limit: int = 8) -> list[dict]:
@@ -177,6 +180,10 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
         return []
 
     terms = _search_terms(query)
+    # Always include short high-signal singles (Soil, Pollution, Article)
+    for extra in re.findall(r"\b(Soil|Pollution|Article|Air|Marine|Coastal|المادة|تربة)\b", query, flags=re.I):
+        if extra not in terms:
+            terms.insert(0, extra)
     if not terms:
         return []
 
@@ -203,29 +210,56 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
         )
 
     for search_term in terms:
-        if len(results) >= limit * 2:
+        if len(results) >= limit * 3:
             break
+        # 1) chunk text
         try:
-            chunk_q = (
-                f"document_chunks?select=chunk_text,documents(name)"
-                f"&{_ilike_filter('chunk_text', search_term)}&limit={limit}"
+            path = _ilike_path(
+                "document_chunks?select=chunk_text,documents(name)",
+                "chunk_text",
+                search_term,
+                limit,
             )
-            for row in _supabase_get(chunk_q):
+            for row in _supabase_get(path):
                 docs = row.get("documents") or {}
                 name = docs.get("name") if isinstance(docs, dict) else "Unknown"
-                _add(name or "Unknown", row.get("chunk_text") or "", 0.65)
+                _add(name or "Unknown", row.get("chunk_text") or "", 0.7)
         except Exception as e:
             print(f"chunk keyword warning ({search_term}): {e}")
 
+        # 2) document name (helps when content OCR is messy)
         try:
-            doc_q = (
-                f"documents?select=name,content"
-                f"&{_ilike_filter('content', search_term)}&limit=4"
+            path = _ilike_path(
+                "documents?select=name,content",
+                "name",
+                search_term,
+                4,
             )
-            for row in _supabase_get(doc_q):
+            for row in _supabase_get(path):
                 name = row.get("name", "Unknown")
                 content = row.get("content") or ""
-                _add(name, snippet_around(content, search_term), 0.55)
+                # Prefer a window around article/topic terms from the query
+                anchor = search_term
+                for a in _search_terms(query):
+                    if a.lower() in content.lower():
+                        anchor = a
+                        break
+                _add(name, snippet_around(content, anchor), 0.68)
+        except Exception as e:
+            print(f"name keyword warning ({search_term}): {e}")
+
+        # 3) document content
+        try:
+            path = _ilike_path(
+                "documents?select=name,content",
+                "content",
+                search_term,
+                4,
+            )
+            for row in _supabase_get(path):
+                name = row.get("name", "Unknown")
+                content = row.get("content") or ""
+                _add(name, snippet_around(content, search_term), 0.6)
         except Exception as e:
             print(f"doc keyword warning ({search_term}): {e}")
 
@@ -261,7 +295,10 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
     merged: list[dict] = []
     seen: set[str] = set()
 
-    for c in keyword_chunks + vector_chunks:
+    # Prefer keyword hits first — hash embeddings are weak / often mismatched
+    ordered = list(keyword_chunks) + list(vector_chunks)
+
+    for c in ordered:
         text = clean_chunk(c.get("chunk_text", ""))
         name = c.get("document_name", "Unknown")
         if is_toc_noise(text):
@@ -271,17 +308,20 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
             continue
         seen.add(key)
         overlap = float(c.get("lexical") or lexical_overlap(question, f"{name}\n{text}"))
-        # Drop vector hits with zero lexical overlap when we already have keyword hits
-        if c.get("source") == "vector" and overlap < 0.08 and keyword_chunks:
+        # Drop weak vector-only hits when keyword retrieval found anything
+        if c.get("source") == "vector" and keyword_chunks and overlap < 0.2:
             continue
-        item = {
-            "document_name": name,
-            "chunk_text": text[:2500],
-            "similarity": float(c.get("similarity") or 0),
-            "lexical": overlap,
-            "source": c.get("source") or "vector",
-        }
-        merged.append(item)
+        if c.get("source") == "vector" and not keyword_chunks and overlap < 0.15:
+            continue
+        merged.append(
+            {
+                "document_name": name,
+                "chunk_text": text[:2500],
+                "similarity": float(c.get("similarity") or 0),
+                "lexical": overlap,
+                "source": c.get("source") or "vector",
+            }
+        )
 
     article_hits = re.findall(r"(?:Article|المادة)\s*\(?\s*\d+\s*\)?", question, flags=re.I)
     wants_soil = bool(re.search(r"soil|تربة", question, flags=re.I))
@@ -291,25 +331,25 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
         text = c.get("chunk_text") or ""
         name = c.get("document_name") or ""
         blob = f"{name}\n{text}".lower()
-        s = float(c.get("similarity") or 0) + float(c.get("lexical") or 0) * 1.2
-        if wants_soil and ("soil" in blob or "تربة" in blob):
-            s += 0.45
-        if wants_soil and "air quality" in blob and "soil" not in blob:
-            s -= 0.4
-        if wants_air and "air" in blob:
+        s = float(c.get("similarity") or 0) + float(c.get("lexical") or 0) * 1.5
+        if c.get("source") == "keyword":
             s += 0.25
+        if wants_soil and ("soil" in blob or "تربة" in blob or "prevention and remediation of soil" in blob):
+            s += 0.6
+        if wants_soil and ("air quality" in blob or "marine" in blob) and "soil" not in blob:
+            s -= 0.55
+        if wants_air and "air" in blob:
+            s += 0.3
         for a in article_hits:
             nums = re.findall(r"\d+", a)
             if not nums:
                 continue
             if re.search(rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?", text, re.I):
-                s += 0.55
+                s += 0.6
         return s
 
     merged.sort(key=score, reverse=True)
-
-    # Keep only chunks with some relevance to the question when possible
-    strong = [c for c in merged if c.get("lexical", 0) >= 0.12 or score(c) >= 0.7]
+    strong = [c for c in merged if c.get("lexical", 0) >= 0.15 or score(c) >= 0.85]
     return (strong or merged)[:limit]
 
 
