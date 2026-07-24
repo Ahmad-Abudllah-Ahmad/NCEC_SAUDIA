@@ -291,31 +291,40 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
     return results[:limit]
 
 
-DOCUMENT_SYSTEM = """You are the NCEC document assistant.
+DOCUMENT_SYSTEM = """You are the NCEC AI Document Assistant — an expert system for the Saudi National Center for Environmental Compliance (NCEC).
+
+Your role is to help staff find and understand information from their uploaded documents (environmental regulations, executive regulations, guidelines, circulars, reports, EIA studies, etc.).
 
 STRICT GROUNDING RULES (non-negotiable):
-1. Use ONLY the Context Documents below. They come from the vector knowledge base.
-2. You MAY clarify, rephrase, organize, and elaborate for readability — but every fact, number, obligation, definition, and article reference MUST come from the context.
-3. Do NOT invent, assume, update, or “correct” the source text. Do NOT use outside knowledge.
-4. If the context is missing the answer, say clearly that the documents do not contain enough information.
-5. Prefer quoting or closely paraphrasing operative clauses (e.g. Article numbers and duties).
-6. Ignore OCR noise such as “[Page 2] 3 of 30” and table-of-contents dotted lines.
-7. Respond in the same language as the user’s question (Arabic or English).
-8. Structure the answer in clear Markdown."""
+1. Answer ONLY from the Context Documents provided below. They come from the organization's vector knowledge base.
+2. You MAY clarify, rephrase, organize, summarize, and elaborate for readability — but every fact, number, obligation, definition, and article reference MUST come from the context.
+3. Do NOT invent, assume, update, or "correct" the source text. Do NOT use outside knowledge or general legal knowledge.
+4. If the context is missing the answer, say clearly: "The available documents do not contain enough information to answer this question."
+5. Prefer quoting or closely paraphrasing operative clauses. Always cite Article/clause numbers and document names when present.
+6. Ignore OCR noise such as "[Page 2] 3 of 30" and table-of-contents dotted lines.
+7. Respond in the same language as the user's question (Arabic or English).
+8. Structure the answer in clear Markdown with headings, bullet points, and numbered lists.
+9. Be thorough and comprehensive — include ALL relevant information found across ALL provided source documents.
+10. If multiple documents contain relevant information, synthesize and present information from all of them."""
 
-LEGAL_SYSTEM = """You are the NCEC legal & policy assistant for staff.
+LEGAL_SYSTEM = """You are the NCEC AI Legal & Policy Assistant — a specialized legal expert system for NCEC staff.
+
+Your role is to provide accurate legal and regulatory guidance by analyzing the organization's environmental laws, executive regulations, and policy documents.
 
 STRICT GROUNDING RULES (non-negotiable):
-1. Use ONLY the Context Documents from the vector knowledge base.
-2. You MAY elaborate and organize the legal text for clarity, but you must NOT change legal meaning or add rules that are not in the context.
-3. Quote Article / clause numbers when present.
-4. If the context does not support an answer, say so — do not speculate.
-5. Ignore page footers and TOC noise.
-6. Respond in the same language as the user’s question.
-7. Use Markdown headings and bullets when helpful."""
+1. Answer ONLY from the Context Documents provided below. They come from the organization's vector knowledge base.
+2. You MAY elaborate, interpret, and organize legal text for clarity, but you must NOT change legal meaning, add rules not in the context, or speculate on legal outcomes.
+3. Always quote Article numbers, clause numbers, and regulation names when present.
+4. If the context does not support an answer, say: "The available legal documents do not contain enough information to answer this question."
+5. Ignore page footers, OCR noise, and TOC dotted lines.
+6. Respond in the same language as the user's question (Arabic or English).
+7. Structure answers with Markdown headings, bullet points, and numbered lists for clarity.
+8. When discussing penalties or obligations, quote the exact text and reference the specific article.
+9. Be thorough — present ALL relevant legal provisions found across ALL provided source documents.
+10. If different regulations address the same topic, compare and cross-reference them."""
 
 
-def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: list[dict], limit: int = 6) -> list[dict]:
+def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: list[dict], limit: int = 10) -> list[dict]:
     merged: list[dict] = []
     seen: set[str] = set()
 
@@ -332,10 +341,10 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
             continue
         seen.add(key)
         overlap = float(c.get("lexical") or lexical_overlap(question, f"{name}\n{text}"))
-        # Drop weak vector-only hits when keyword retrieval found anything
-        if c.get("source") == "vector" and keyword_chunks and overlap < 0.2:
+        # Keep vector hits if they have any lexical relevance (relaxed thresholds)
+        if c.get("source") == "vector" and keyword_chunks and overlap < 0.05:
             continue
-        if c.get("source") == "vector" and not keyword_chunks and overlap < 0.15:
+        if c.get("source") == "vector" and not keyword_chunks and overlap < 0.03:
             continue
         merged.append(
             {
@@ -373,7 +382,7 @@ def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: lis
         return s
 
     merged.sort(key=score, reverse=True)
-    strong = [c for c in merged if c.get("lexical", 0) >= 0.15 or score(c) >= 0.85]
+    strong = [c for c in merged if c.get("lexical", 0) >= 0.1 or score(c) >= 0.6]
     return (strong or merged)[:limit]
 
 
@@ -381,7 +390,7 @@ def run_rag_chat(
     question: str,
     mode: str = "document",
     match_threshold: float = 0.0,
-    match_count: int = 8,
+    match_count: int = 12,
 ) -> dict:
     question = (question or "").strip()
     embedding = embed_text(question)
@@ -426,8 +435,8 @@ def run_rag_chat(
         return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": CHAT_MODEL_LABEL}
 
     context_parts = []
-    for i, c in enumerate(chunks[:5], start=1):
-        text = c.get("chunk_text", "")[:2000]
+    for i, c in enumerate(chunks[:8], start=1):
+        text = c.get("chunk_text", "")[:3000]
         if len(text) < 40:
             continue
         context_parts.append(
@@ -448,13 +457,17 @@ def run_rag_chat(
         f"Context Documents (vector knowledge base excerpts):\n{context}\n\n"
         f"User Question:\n{question}\n\n"
         "Instructions:\n"
-        "- Answer using ONLY the context above.\n"
-        "- You may elaborate and organize clearly, but do not add facts that are not in the context.\n"
-        "- Cite Article/source numbers when present.\n"
-        "- If the context does not contain the answer, say you do not have enough information."
+        "- Answer the user's question thoroughly and comprehensively using ONLY the context above.\n"
+        "- Include ALL relevant information from ALL source documents provided.\n"
+        "- You may elaborate, organize, and structure clearly, but do not add facts that are not in the context.\n"
+        "- Always cite the specific document name, Article number, and clause number when present.\n"
+        "- If the question asks about a specific topic, gather and present information from every source that mentions it.\n"
+        "- Use Markdown formatting (headings, bullet points, numbered lists) to structure the answer clearly.\n"
+        "- If the context does not contain the answer, say you do not have enough information.\n"
+        "- Do NOT refuse to answer if the context contains relevant information — always provide what you can."
     )
 
-    answer = generate_text(prompt, system, max_tokens=1200)
+    answer = generate_text(prompt, system, max_tokens=2048)
     answer = clean_chunk(answer)
     answer = re.sub(r"(\[Page\s*\d+\]\s*)+", "", answer, flags=re.I).strip()
 

@@ -4,7 +4,7 @@ set -euo pipefail
 echo "NCEC Backend — PaddleOCR + Groq Llama"
 
 # Force open-weight Llama on Groq (ignore stale dashboard model names)
-export CHAT_MODEL="llama-3.1-8b-instant"
+export CHAT_MODEL="llama-3.3-70b-versatile"
 PORT="${PORT:-8100}"
 
 python - <<'PY' || true

@@ -25,13 +25,13 @@ _ALLOWED_GROQ = {
     "llama3-8b-8192",
     "llama3-70b-8192",
 }
-_raw_model = os.getenv("CHAT_MODEL", "llama-3.1-8b-instant").strip()
-CHAT_MODEL_LABEL = _raw_model if _raw_model in _ALLOWED_GROQ else "llama-3.1-8b-instant"
+_raw_model = os.getenv("CHAT_MODEL", "llama-3.3-70b-versatile").strip()
+CHAT_MODEL_LABEL = _raw_model if _raw_model in _ALLOWED_GROQ else "llama-3.3-70b-versatile"
 
 _last_error: Optional[str] = None
 
 
-def _groq_chat(messages: list[dict], max_tokens: int = 1024) -> str:
+def _groq_chat(messages: list[dict], max_tokens: int = 2048) -> str:
     """Call Groq chat completions. Prefer curl (urllib is often CF-blocked from Render)."""
     global _last_error
     if not GROQ_API_KEY:
