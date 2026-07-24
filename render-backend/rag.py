@@ -172,9 +172,12 @@ def run_rag_chat(
 ) -> dict:
     embedding = embed_text(question)
 
-    chunks: list[dict] = []
+    # Keyword / phrase search first (critical for Article-number queries)
+    # Hash embeddings alone often miss exact article text.
+    kw = keyword_search(question, limit=match_count)
+    chunks = list(kw)
     try:
-        chunks = supabase_rpc(
+        vector_chunks = supabase_rpc(
             "match_document_chunks",
             {
                 "query_embedding": embedding,
@@ -186,15 +189,14 @@ def run_rag_chat(
         raise
     except Exception as e:
         print(f"vector search warning: {e}")
+        vector_chunks = []
 
-    # Keyword / phrase search is critical for Article-number queries
-    kw = keyword_search(question, limit=match_count)
-    if kw:
+    if vector_chunks:
         seen_keys = {
             f"{c.get('document_name')}::{(c.get('chunk_text') or '')[:60]}" for c in chunks
         }
-        for k in kw:
-            key = f"{k['document_name']}::{(k.get('chunk_text') or '')[:60]}"
+        for k in vector_chunks:
+            key = f"{k.get('document_name')}::{(k.get('chunk_text') or '')[:60]}"
             if key not in seen_keys:
                 chunks.append(k)
                 seen_keys.add(key)
@@ -206,14 +208,17 @@ def run_rag_chat(
             text = (c.get("chunk_text") or "").lower()
             bonus = 0.0
             for a in article_hits:
-                if a.lower().replace(" ", "") in text.replace(" ", "").lower() or any(
-                    tok in text for tok in re.findall(r"\d+", a)
+                nums = re.findall(r"\d+", a)
+                if not nums:
+                    continue
+                if re.search(
+                    rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?",
+                    text,
+                    re.I,
                 ):
-                    # stronger if "article" + number nearby
-                    if re.search(rf"(?:article|المادة)\s*\(?\s*{re.escape(re.findall(r'\d+', a)[0])}\s*\)?", text, re.I):
-                        bonus += 0.5
-                    else:
-                        bonus += 0.15
+                    bonus += 0.5
+                elif nums[0] in text:
+                    bonus += 0.15
             return float(c.get("similarity") or 0) + bonus
 
         chunks = sorted(chunks, key=score, reverse=True)

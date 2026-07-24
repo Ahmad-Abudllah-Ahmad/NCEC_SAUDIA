@@ -1,17 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "═══════════════════════════════════════════"
-echo " NCEC Backend — PaddleOCR + Groq Llama"
-echo " Model: ${CHAT_MODEL:-llama-3.1-8b-instant}"
-echo "═══════════════════════════════════════════"
+echo "NCEC Backend — PaddleOCR + Groq Llama"
 
-export CHAT_MODEL="${CHAT_MODEL:-llama-3.1-8b-instant}"
+# Force open-weight Llama on Groq (ignore stale dashboard model names)
+export CHAT_MODEL="llama-3.1-8b-instant"
+PORT="${PORT:-8100}"
 
-python - <<'PY'
-from llm_engine import engine_status
-print("→", engine_status())
+python - <<'PY' || true
+try:
+    from llm_engine import engine_status
+    print("llm:", engine_status())
+except Exception as e:
+    print("llm status warning:", e)
 PY
 
-echo "→ Starting FastAPI on PORT=${PORT:-8100}"
-exec python main.py
+echo "Starting uvicorn on 0.0.0.0:${PORT}"
+exec python -m uvicorn main:app --host 0.0.0.0 --port "${PORT}"

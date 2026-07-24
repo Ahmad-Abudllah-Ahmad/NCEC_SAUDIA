@@ -232,5 +232,5 @@ async def llm_embeddings(req: LLMEmbeddingRequest):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8100))
-    print(f"🚀 NCEC Backend starting on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    print(f"NCEC Backend starting on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

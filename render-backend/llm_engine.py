@@ -17,8 +17,16 @@ from typing import Optional
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_BASE = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
-# Lightweight open-weight Llama on Groq
-CHAT_MODEL_LABEL = os.getenv("CHAT_MODEL", "llama-3.1-8b-instant")
+# Lightweight open-weight Llama on Groq (ignore stale/non-Groq CHAT_MODEL values)
+_ALLOWED_GROQ = {
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama3-8b-8192",
+    "llama3-70b-8192",
+}
+_raw_model = os.getenv("CHAT_MODEL", "llama-3.1-8b-instant").strip()
+CHAT_MODEL_LABEL = _raw_model if _raw_model in _ALLOWED_GROQ else "llama-3.1-8b-instant"
 
 _last_error: Optional[str] = None
 
@@ -111,8 +119,11 @@ def clean_ocr_noise(text: str) -> str:
     if not text:
         return ""
     cleaned = re.sub(r"\[Page\s*\d+\]\s*\d+\s+of\s+\d+", " ", text, flags=re.I)
+    cleaned = re.sub(r"\[Page\s*\d+\]", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"Page\s*\d+\s+of\s+\d+", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"(?:\d+\s+of\s+\d+\s*){2,}", " ", cleaned, flags=re.I)
+    # Collapse long runs of page-footer spam
+    cleaned = re.sub(r"(?:\s*\d+\s+of\s+\d+){3,}", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\*{2,}", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
