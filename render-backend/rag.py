@@ -117,16 +117,41 @@ def clean_chunk(text: str) -> str:
     return clean_ocr_noise(text or "")
 
 
-def snippet_around(content: str, term: str, window: int = 1100) -> str:
-    """Pull a window around the first case-insensitive match of term."""
+def snippet_around(content: str, term: str, window: int = 1400) -> str:
+    """Pull a window around the best match for term (prefer Article N hits)."""
     if not content:
         return ""
-    idx = content.lower().find(term.lower())
+    lower = content.lower()
+    term_l = (term or "").lower()
+    idx = lower.find(term_l) if term_l else -1
     if idx < 0:
         return content[: window * 2]
-    start = max(0, idx - window // 3)
+    start = max(0, idx - window // 4)
     end = min(len(content), idx + window)
     return content[start:end]
+
+
+def best_article_snippet(content: str, query: str, fallback_term: str = "") -> str:
+    """Prefer a window around Article (N) from the question inside document content."""
+    if not content:
+        return ""
+    nums = re.findall(r"(?:Article|المادة)\s*\(?\s*(\d+)\s*\)?", query, flags=re.I)
+    for n in nums:
+        patterns = [
+            rf"Article\s*\(\s*{n}\s*\)",
+            rf"Article\s+{n}\b",
+            rf"المادة\s*\(\s*{n}\s*\)",
+            rf"المادة\s+{n}\b",
+        ]
+        for pat in patterns:
+            m = re.search(pat, content, flags=re.I)
+            if m:
+                start = max(0, m.start() - 80)
+                end = min(len(content), m.start() + 1600)
+                return content[start:end]
+    if fallback_term:
+        return snippet_around(content, fallback_term)
+    return content[:2000]
 
 
 def _search_terms(query: str) -> list[str]:
@@ -140,7 +165,12 @@ def _search_terms(query: str) -> list[str]:
 
     art_nums = re.findall(r"(?:Article|المادة)\s*\(?\s*(\d+)\s*\)?", query, flags=re.I)
     for n in art_nums[:2]:
-        terms.extend([f"Article ({n})", f"Article {n}", f"المادة ({n})"])
+        terms.extend([
+            f"Article ({n})",
+            f"Article {n}",
+            f"المادة ({n})",
+            f"Role of Persons",  # common Article(6) soil heading fragment
+        ])
 
     # Topic phrases
     for m in re.finditer(
@@ -238,13 +268,7 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
             for row in _supabase_get(path):
                 name = row.get("name", "Unknown")
                 content = row.get("content") or ""
-                # Prefer a window around article/topic terms from the query
-                anchor = search_term
-                for a in _search_terms(query):
-                    if a.lower() in content.lower():
-                        anchor = a
-                        break
-                _add(name, snippet_around(content, anchor), 0.68)
+                _add(name, best_article_snippet(content, query, search_term), 0.75)
         except Exception as e:
             print(f"name keyword warning ({search_term}): {e}")
 
@@ -259,7 +283,7 @@ def keyword_search(query: str, limit: int = 8) -> list[dict]:
             for row in _supabase_get(path):
                 name = row.get("name", "Unknown")
                 content = row.get("content") or ""
-                _add(name, snippet_around(content, search_term), 0.6)
+                _add(name, best_article_snippet(content, query, search_term), 0.65)
         except Exception as e:
             print(f"doc keyword warning ({search_term}): {e}")
 
