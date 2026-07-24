@@ -1,5 +1,9 @@
 """
-Server-side RAG: hybrid retrieval (pgvector + keyword) + Groq Llama generation.
+Server-side RAG: hybrid retrieval + strictly grounded Groq Llama answers.
+
+Rules for generation:
+- Answer ONLY from retrieved vector/keyword context.
+- LLM may clarify/organize/elaborate wording, but must NOT add or change facts.
 """
 
 from __future__ import annotations
@@ -15,6 +19,16 @@ from llm_engine import CHAT_MODEL_LABEL, clean_ocr_noise, embed_text, engine_sta
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+STOPWORDS = {
+    "the", "and", "for", "about", "this", "that", "with", "from", "tell", "more",
+    "what", "must", "persons", "role", "regarding", "please", "give", "have",
+    "does", "did", "how", "why", "when", "where", "which", "who", "are", "is",
+    "was", "were", "been", "being", "into", "onto", "over", "under", "than",
+    "then", "them", "they", "their", "there", "these", "those", "your", "you",
+    "can", "could", "would", "should", "will", "shall", "may", "might", "also",
+    "only", "just", "any", "all", "each", "every", "some", "such", "not",
+}
 
 
 class RAGError(Exception):
@@ -49,34 +63,98 @@ def supabase_rpc(fn: str, params: dict) -> list[dict]:
         raise RAGError(f"Supabase RPC {fn} failed ({e.code}): {body}") from e
 
 
+def _supabase_get(path_query: str) -> list[dict]:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    url = f"{SUPABASE_URL}/rest/v1/{path_query}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, list) else []
+
+
+def significant_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[\u0600-\u06FF]{2,}|[a-zA-Z0-9]{3,}", text or "")
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in tokens:
+        k = t.lower()
+        if k in STOPWORDS or k in seen:
+            continue
+        seen.add(k)
+        out.append(t)
+    return out
+
+
+def lexical_overlap(query: str, text: str) -> float:
+    """Fraction of query tokens that appear in text (0..1)."""
+    q = [t.lower() for t in significant_tokens(query)]
+    if not q:
+        return 0.0
+    blob = (text or "").lower()
+    hits = sum(1 for t in q if t in blob)
+    return hits / len(q)
+
+
+def is_toc_noise(text: str) -> bool:
+    if not text:
+        return True
+    if text.count(".") > 40 and len(re.findall(r"\.{4,}", text)) >= 3:
+        return True
+    if len(re.findall(r"\d+\s+of\s+\d+", text, flags=re.I)) >= 4:
+        return True
+    return len(re.sub(r"[\W_\d]+", "", text)) < 40
+
+
+def clean_chunk(text: str) -> str:
+    return clean_ocr_noise(text or "")
+
+
+def snippet_around(content: str, term: str, window: int = 1100) -> str:
+    """Pull a window around the first case-insensitive match of term."""
+    if not content:
+        return ""
+    idx = content.lower().find(term.lower())
+    if idx < 0:
+        return content[: window * 2]
+    start = max(0, idx - window // 3)
+    end = min(len(content), idx + window)
+    return content[start:end]
+
+
 def _search_terms(query: str) -> list[str]:
     terms: list[str] = []
-    # Prefer article / regulation phrases for legal docs
     for m in re.finditer(
-        r"(Article\s*\(?\s*\d+\s*\)?|المادة\s*\(?\s*\d+\s*\)?|"
-        r"Soil Pollution|تلوث التربة|Soil Pollution Prevention)",
+        r"(Article\s*\(?\s*\d+\s*\)?|المادة\s*\(?\s*\d+\s*\)?)",
         query,
         flags=re.I,
     ):
         terms.append(m.group(0).strip())
-    # If soil + article mentioned, add combined phrases for better chunk hits
+
     art_nums = re.findall(r"(?:Article|المادة)\s*\(?\s*(\d+)\s*\)?", query, flags=re.I)
-    if art_nums and re.search(r"soil|تربة", query, flags=re.I):
-        n = art_nums[0]
-        terms[0:0] = [
-            f"Article ({n}) – Role of Persons regarding Soil",
-            f"Article ({n})",
-            "Soil Pollution Prevention and Protection",
-        ]
-    tokens = re.findall(r"[\u0600-\u06FF]{2,}|[a-zA-Z]{3,}", query)
-    # Drop ultra-generic words
-    stop = {"the", "and", "for", "about", "this", "that", "with", "from", "tell", "more", "what", "must", "persons", "role"}
-    for t in tokens:
-        if t.lower() in stop:
-            continue
-        if t not in terms:
+    for n in art_nums[:2]:
+        terms.extend([f"Article ({n})", f"Article {n}", f"المادة ({n})"])
+
+    # Topic phrases
+    for m in re.finditer(
+        r"(Soil Pollution|تلوث التربة|Air Quality|جودة الهواء|"
+        r"Environmental Law|Environmental Compliance|EIA|نطاق)",
+        query,
+        flags=re.I,
+    ):
+        terms.append(m.group(0).strip())
+
+    for t in significant_tokens(query):
+        if len(t) >= 4:
             terms.append(t)
-    # Dedupe
+
     seen: set[str] = set()
     out: list[str] = []
     for t in terms:
@@ -84,10 +162,17 @@ def _search_terms(query: str) -> list[str]:
         if k not in seen:
             seen.add(k)
             out.append(t)
-    return out[:8]
+    return out[:10]
 
 
-def keyword_search(query: str, limit: int = 6) -> list[dict]:
+def _ilike_filter(column: str, term: str) -> str:
+    """PostgREST-safe ilike filter (quoted for parentheses/spaces)."""
+    # Escape quotes inside term
+    safe = term.replace('"', "")
+    return f'{column}=ilike."*{safe}*"'
+
+
+def keyword_search(query: str, limit: int = 8) -> list[dict]:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return []
 
@@ -98,104 +183,150 @@ def keyword_search(query: str, limit: int = 6) -> list[dict]:
     results: list[dict] = []
     seen: set[str] = set()
 
-    def _add(name: str, text: str, sim: float = 0.6):
-        key = f"{name}::{text[:80]}"
-        if key in seen or not text.strip():
+    def _add(name: str, text: str, base_sim: float):
+        text = clean_chunk(text)
+        if is_toc_noise(text):
+            return
+        key = f"{name}::{text[:90]}"
+        if key in seen:
             return
         seen.add(key)
+        overlap = lexical_overlap(query, f"{name}\n{text}")
         results.append(
             {
                 "document_name": name or "Unknown",
                 "chunk_text": text[:2500],
-                "similarity": sim,
+                "similarity": base_sim + overlap * 0.35,
+                "lexical": overlap,
+                "source": "keyword",
             }
         )
 
     for search_term in terms:
-        if len(results) >= limit:
+        if len(results) >= limit * 2:
             break
-        q = urllib.parse.quote(f"*{search_term}*")
-        # Prefer chunk-level hits (better for Article N questions)
-        endpoints = [
-            (
-                f"{SUPABASE_URL}/rest/v1/document_chunks"
-                f"?select=chunk_text,documents(name)"
-                f"&chunk_text=ilike.{q}"
-                f"&limit={limit}",
-                "chunk",
-            ),
-            (
-                f"{SUPABASE_URL}/rest/v1/documents"
-                f"?select=name,content"
-                f"&content=ilike.{q}"
-                f"&limit={limit}",
-                "doc",
-            ),
-        ]
-        for url, kind in endpoints:
-            try:
-                req = urllib.request.Request(
-                    url,
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                    },
-                    method="GET",
-                )
-                with urllib.request.urlopen(req, timeout=20) as resp:
-                    rows = json.loads(resp.read().decode("utf-8"))
-                for row in rows or []:
-                    if kind == "chunk":
-                        docs = row.get("documents") or {}
-                        name = docs.get("name") if isinstance(docs, dict) else "Unknown"
-                        _add(name or "Unknown", row.get("chunk_text") or "", 0.72)
-                    else:
-                        _add(row.get("name", "Unknown"), (row.get("content") or "")[:2500], 0.55)
-            except Exception:
-                continue
+        try:
+            chunk_q = (
+                f"document_chunks?select=chunk_text,documents(name)"
+                f"&{_ilike_filter('chunk_text', search_term)}&limit={limit}"
+            )
+            for row in _supabase_get(chunk_q):
+                docs = row.get("documents") or {}
+                name = docs.get("name") if isinstance(docs, dict) else "Unknown"
+                _add(name or "Unknown", row.get("chunk_text") or "", 0.65)
+        except Exception as e:
+            print(f"chunk keyword warning ({search_term}): {e}")
 
+        try:
+            doc_q = (
+                f"documents?select=name,content"
+                f"&{_ilike_filter('content', search_term)}&limit=4"
+            )
+            for row in _supabase_get(doc_q):
+                name = row.get("name", "Unknown")
+                content = row.get("content") or ""
+                _add(name, snippet_around(content, search_term), 0.55)
+        except Exception as e:
+            print(f"doc keyword warning ({search_term}): {e}")
+
+    results.sort(key=lambda c: (c.get("lexical", 0), c.get("similarity", 0)), reverse=True)
     return results[:limit]
 
 
-def clean_chunk(text: str) -> str:
-    return clean_ocr_noise(text)
+DOCUMENT_SYSTEM = """You are the NCEC document assistant.
+
+STRICT GROUNDING RULES (non-negotiable):
+1. Use ONLY the Context Documents below. They come from the vector knowledge base.
+2. You MAY clarify, rephrase, organize, and elaborate for readability — but every fact, number, obligation, definition, and article reference MUST come from the context.
+3. Do NOT invent, assume, update, or “correct” the source text. Do NOT use outside knowledge.
+4. If the context is missing the answer, say clearly that the documents do not contain enough information.
+5. Prefer quoting or closely paraphrasing operative clauses (e.g. Article numbers and duties).
+6. Ignore OCR noise such as “[Page 2] 3 of 30” and table-of-contents dotted lines.
+7. Respond in the same language as the user’s question (Arabic or English).
+8. Structure the answer in clear Markdown."""
+
+LEGAL_SYSTEM = """You are the NCEC legal & policy assistant for staff.
+
+STRICT GROUNDING RULES (non-negotiable):
+1. Use ONLY the Context Documents from the vector knowledge base.
+2. You MAY elaborate and organize the legal text for clarity, but you must NOT change legal meaning or add rules that are not in the context.
+3. Quote Article / clause numbers when present.
+4. If the context does not support an answer, say so — do not speculate.
+5. Ignore page footers and TOC noise.
+6. Respond in the same language as the user’s question.
+7. Use Markdown headings and bullets when helpful."""
 
 
-DOCUMENT_SYSTEM = """You are a professional environmental AI assistant for the Saudi National Center for Environmental Compliance (NCEC).
+def merge_and_rank(question: str, keyword_chunks: list[dict], vector_chunks: list[dict], limit: int = 6) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
 
-CRITICAL RULES:
-1. Answer ONLY using the Context Documents. Do NOT invent facts.
-2. If the context does not contain the answer, say you do not have enough information.
-3. Respond in the same language as the user's question (Arabic or English).
-4. Be specific: quote Article/clause numbers and the actual obligations from the text.
-5. Do NOT repeat page footers, "Page X of Y", or citation markers like [Page N].
-6. Write a clear, structured answer in Markdown. No gibberish or looping text."""
+    for c in keyword_chunks + vector_chunks:
+        text = clean_chunk(c.get("chunk_text", ""))
+        name = c.get("document_name", "Unknown")
+        if is_toc_noise(text):
+            continue
+        key = f"{name}::{text[:90]}"
+        if key in seen:
+            continue
+        seen.add(key)
+        overlap = float(c.get("lexical") or lexical_overlap(question, f"{name}\n{text}"))
+        # Drop vector hits with zero lexical overlap when we already have keyword hits
+        if c.get("source") == "vector" and overlap < 0.08 and keyword_chunks:
+            continue
+        item = {
+            "document_name": name,
+            "chunk_text": text[:2500],
+            "similarity": float(c.get("similarity") or 0),
+            "lexical": overlap,
+            "source": c.get("source") or "vector",
+        }
+        merged.append(item)
 
-LEGAL_SYSTEM = """You are a specialized Executive AI Legal & Policy Assistant for NCEC staff.
+    article_hits = re.findall(r"(?:Article|المادة)\s*\(?\s*\d+\s*\)?", question, flags=re.I)
+    wants_soil = bool(re.search(r"soil|تربة", question, flags=re.I))
+    wants_air = bool(re.search(r"air quality|جودة الهواء|fugitive", question, flags=re.I))
 
-CRITICAL RULES:
-1. Answer ONLY using the Context Documents. Do NOT hallucinate law.
-2. Use Markdown headings and bullet points for duties/obligations.
-3. Quote Article numbers and operative language from the context.
-4. If the answer is not in the context, say so clearly.
-5. Respond in the same language as the user's question.
-6. Never output page footers or repeating "Page X of Y" noise."""
+    def score(c: dict) -> float:
+        text = c.get("chunk_text") or ""
+        name = c.get("document_name") or ""
+        blob = f"{name}\n{text}".lower()
+        s = float(c.get("similarity") or 0) + float(c.get("lexical") or 0) * 1.2
+        if wants_soil and ("soil" in blob or "تربة" in blob):
+            s += 0.45
+        if wants_soil and "air quality" in blob and "soil" not in blob:
+            s -= 0.4
+        if wants_air and "air" in blob:
+            s += 0.25
+        for a in article_hits:
+            nums = re.findall(r"\d+", a)
+            if not nums:
+                continue
+            if re.search(rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?", text, re.I):
+                s += 0.55
+        return s
+
+    merged.sort(key=score, reverse=True)
+
+    # Keep only chunks with some relevance to the question when possible
+    strong = [c for c in merged if c.get("lexical", 0) >= 0.12 or score(c) >= 0.7]
+    return (strong or merged)[:limit]
 
 
 def run_rag_chat(
     question: str,
     mode: str = "document",
     match_threshold: float = 0.0,
-    match_count: int = 6,
+    match_count: int = 8,
 ) -> dict:
+    question = (question or "").strip()
     embedding = embed_text(question)
 
-    # Keyword / phrase search first (critical for Article-number queries)
-    # Hash embeddings alone often miss exact article text.
     kw = keyword_search(question, limit=match_count)
-    chunks = list(kw)
+
+    vector_chunks: list[dict] = []
     try:
-        vector_chunks = supabase_rpc(
+        raw_vec = supabase_rpc(
             "match_document_chunks",
             {
                 "query_embedding": embedding,
@@ -203,50 +334,24 @@ def run_rag_chat(
                 "match_count": match_count,
             },
         )
+        for c in raw_vec:
+            text = c.get("chunk_text") or ""
+            name = c.get("document_name") or "Unknown"
+            vector_chunks.append(
+                {
+                    "document_name": name,
+                    "chunk_text": text,
+                    "similarity": float(c.get("similarity") or 0),
+                    "lexical": lexical_overlap(question, f"{name}\n{text}"),
+                    "source": "vector",
+                }
+            )
     except RAGError:
         raise
     except Exception as e:
         print(f"vector search warning: {e}")
-        vector_chunks = []
 
-    if vector_chunks:
-        seen_keys = {
-            f"{c.get('document_name')}::{(c.get('chunk_text') or '')[:60]}" for c in chunks
-        }
-        for k in vector_chunks:
-            key = f"{k.get('document_name')}::{(k.get('chunk_text') or '')[:60]}"
-            if key not in seen_keys:
-                chunks.append(k)
-                seen_keys.add(key)
-
-    # Rank: prefer chunks matching topic (soil) + article number
-    article_hits = re.findall(r"(?:Article|المادة)\s*\(?\s*\d+\s*\)?", question, flags=re.I)
-    wants_soil = bool(re.search(r"soil|تربة", question, flags=re.I))
-
-    def score(c: dict) -> float:
-        text = (c.get("chunk_text") or "")
-        name = (c.get("document_name") or "")
-        blob = f"{name}\n{text}".lower()
-        bonus = 0.0
-        if wants_soil and ("soil" in blob or "تربة" in blob):
-            bonus += 0.4
-        if wants_soil and "air quality" in blob and "soil" not in blob:
-            bonus -= 0.35
-        for a in article_hits:
-            nums = re.findall(r"\d+", a)
-            if not nums:
-                continue
-            if re.search(
-                rf"(?:article|المادة)\s*\(?\s*{re.escape(nums[0])}\s*\)?",
-                text,
-                re.I,
-            ):
-                bonus += 0.5
-            elif nums[0] in text:
-                bonus += 0.1
-        return float(c.get("similarity") or 0) + bonus
-
-    chunks = sorted(chunks, key=score, reverse=True)
+    chunks = merge_and_rank(question, kw, vector_chunks, limit=match_count)
 
     if not chunks:
         no_info = (
@@ -256,14 +361,13 @@ def run_rag_chat(
         )
         return {"answer": no_info, "citations": [], "chunks_used": 0, "engine": CHAT_MODEL_LABEL}
 
-    # Clean context aggressively so the model does not echo OCR footers
     context_parts = []
-    for c in chunks[:5]:
-        text = clean_chunk(c.get("chunk_text", ""))
+    for i, c in enumerate(chunks[:5], start=1):
+        text = c.get("chunk_text", "")[:2000]
         if len(text) < 40:
             continue
         context_parts.append(
-            f"Document: {c.get('document_name', 'Unknown')}\nText:\n{text[:1800]}"
+            f"[Source {i}] Document: {c.get('document_name', 'Unknown')}\n{text}"
         )
     context = "\n\n---\n\n".join(context_parts)
 
@@ -277,31 +381,46 @@ def run_rag_chat(
 
     system = LEGAL_SYSTEM if mode == "legal" else DOCUMENT_SYSTEM
     prompt = (
-        f"Context Documents:\n{context}\n\n"
+        f"Context Documents (vector knowledge base excerpts):\n{context}\n\n"
         f"User Question:\n{question}\n\n"
-        "Write a precise answer using only the context above. "
-        "Cite Article numbers when present. Do not repeat page markers."
+        "Instructions:\n"
+        "- Answer using ONLY the context above.\n"
+        "- You may elaborate and organize clearly, but do not add facts that are not in the context.\n"
+        "- Cite Article/source numbers when present.\n"
+        "- If the context does not contain the answer, say you do not have enough information."
     )
 
-    answer = generate_text(prompt, system)
-    # Strip any residual footer spam the model might echo
+    answer = generate_text(prompt, system, max_tokens=1200)
     answer = clean_chunk(answer)
     answer = re.sub(r"(\[Page\s*\d+\]\s*)+", "", answer, flags=re.I).strip()
 
-    citations = []
-    for c in chunks[:3]:
-        citations.append(
-            {
-                "document_name": c.get("document_name", "Unknown"),
-                "chunk_text": clean_chunk(c.get("chunk_text", "")),
-                "similarity": c.get("similarity", 0),
-            }
-        )
+    citations = [
+        {
+            "document_name": c.get("document_name", "Unknown"),
+            "chunk_text": (c.get("chunk_text") or "")[:600],
+            "similarity": c.get("similarity", 0),
+            "lexical": c.get("lexical", 0),
+            "source": c.get("source"),
+        }
+        for c in chunks[:3]
+    ]
 
     return {
         "answer": answer,
         "citations": citations,
         "chunks_used": len(chunks),
+        "retrieval": {
+            "keyword_hits": len(kw),
+            "vector_hits": len(vector_chunks),
+            "used": [
+                {
+                    "document_name": c.get("document_name"),
+                    "lexical": round(float(c.get("lexical") or 0), 3),
+                    "source": c.get("source"),
+                }
+                for c in chunks[:5]
+            ],
+        },
         "engine": CHAT_MODEL_LABEL,
         "model_info": engine_status(),
     }

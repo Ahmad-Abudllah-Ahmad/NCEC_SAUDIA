@@ -10,7 +10,7 @@ export type DocumentData = {
 };
 
 /** Chunk text with overlap for better retrieval quality. */
-function chunkText(text: string, chunkSize = 800, overlap = 150): string[] {
+function chunkText(text: string, chunkSize = 1200, overlap = 200): string[] {
   const chunks: string[] = [];
   let i = 0;
   while (i < text.length) {

@@ -43,8 +43,8 @@ def _groq_chat(messages: list[dict], max_tokens: int = 1024) -> str:
     payload = {
         "model": CHAT_MODEL_LABEL,
         "messages": messages,
-        "temperature": 0.15,
-        "top_p": 0.9,
+        "temperature": 0.05,
+        "top_p": 0.85,
         "max_tokens": max_tokens,
     }
     url = f"{GROQ_BASE}/chat/completions"
